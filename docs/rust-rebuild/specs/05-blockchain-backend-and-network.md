@@ -86,6 +86,13 @@ Core sources cited below come from `raw.githubusercontent.com/bitcoin/bitcoin/ma
   - `HistoryPager` pages ledgers for the UI (`BtcWallet.h:57-250`, `ScrAddrObj.h:41-293`, `LedgerEntry.h:56-154`, `HistoryPager.h:18-77`).
   - Python receives callbacks `BDMAction_Ready/NewBlock/ZC/Refresh` (`armoryengine/BDM.py:40-90`, `BDM_mainthread.cpp:342-410`).
 
+### 1.4a Reorg handling (`Blockchain`, `ReorgUpdater.h`, wallets)
+
+- **Detection.** New headers read from the blk files are organized by `Blockchain`. When the new top block does not extend the old one, `readBlkFileUpdate` builds a `ReorgUpdater` with the old top, the new top and the branch point (`BlockUtils.cpp:1659`; undo-only variant at `:2133`).
+- **Unwinding.** `ReorgUpdater::undoBlocksFromDB` (`ReorgUpdater.h:179-213`) walks from the old top back to the branch point. For each block it *derives* undo data on the fly from the block stored in Armory's own DB (`createUndoDataFromBlock`, `:30-90`, which throws "Cannot get undo data for block because not full!" if the block is not stored) and reverses it through `BlockWriteBatcher::undoBlockFromDB`. `DB_PREFIX_UNDODATA` exists in the schema, but undo data is computed rather than persisted.
+- **Replay.** It then fixes duplicate IDs and applies the new branch (`applyBlocksFromBranchPoint`, `:234-257`; `reassessAfterReorgThread`, `:259-285`). Wallets and addresses are refreshed via `BtcWallet::updateAfterReorg` (`BtcWallet.h:219`) and `ScrAddrObj::updateAfterReorg` (`ScrAddrObj.h:253`).
+- **Implication.** Reorg correctness depends on Armory holding a full private copy of every recent block, which is another reason not to port this design (§4.4).
+
 ### 1.5 P2P client (`armoryengine/Networking.py`)
 
 - **Connection.** There is a single Twisted `ReconnectingClientFactory` to `127.0.0.1:BITCOIN_PORT` (`ArmoryQt.py:2601-2607`; class at `Networking.py:296-392`).
@@ -178,7 +185,7 @@ Core sources cited below come from `raw.githubusercontent.com/bitcoin/bitcoin/ma
   - `notfound` is not in `PayloadMap`. Core sends `notfound` for a `getdata` it cannot serve (`:2830`).
   - `FindTxForGetData` only serves a mempool tx if it was in the mempool before Core's last `inv` to that peer (`:2739-2760`). Inbound inv trickle averages 5 s (`:170`).
   - Armory's post-broadcast `getdata` fires after 3 s (`ArmoryQt.py:3791`, `callLater(3, ...)`), and every tx inv is answered with a `getdata`.
-  - `notfound` replies are therefore expected. Because of the non-consuming `return` (`Networking.py:120-121`), **one `notfound` freezes the connection forever**: every later `dataReceived` re-parses the same bytes.
+  - A `notfound` reply is therefore likely on any given broadcast and practically certain over a session. Because of the non-consuming `return` (`Networking.py:120-121`), **one `notfound` freezes the connection forever**: every later `dataReceived` re-parses the same bytes.
 - **Hazard 2: no broadcast feedback.**
   - BIP61 `reject` was removed in Core 0.20 (`release-notes-0.20.0.md:64-100`), so `PayloadReject` never fires.
   - While Core is in IBD, unsolicited `tx` messages are silently dropped (`net_processing.cpp:4714-4716`).
@@ -236,7 +243,7 @@ Core sources cited below come from `raw.githubusercontent.com/bitcoin/bitcoin/ma
 | mainnet base58 | `ADDRBYTE 0x00`, `P2SHBYTE 0x05`, `PRIVKEYBYTE 0x80` ✔ | 0 / 5 / 128 (`:176-178`); bech32 HRP `bc` (`:182`) — **missing in Armory** |
 | testnet3 | `0b110907` / 18333 / 18332, `0x6f/0xc4/0xef`, subdir `testnet3` ✔ | Same (`:275-303`, `chainparamsbase.cpp:67`). HRP `tb`. **Deprecated:** "Support for testnet3 is deprecated and will be removed in an upcoming release" (`chainparamsbase.cpp:23`; `release-notes-28.0.md:54-56`). |
 | testnet4 (BIP94) | **unknown** | magic `1c163f28`, P2P 48333, RPC 48332, subdir `testnet4`, base58 111/196/239, HRP `tb` (`:383-417`; `chainparamsbase.cpp:69`). Added in 28.0. |
-| signet | **unknown** | Magic is derived from the challenge (`kernel::GetSignetMessageStart`, `:532`); the default signet is `0a03cf40`. P2P 38333, RPC 38332, subdir `signet` (custom challenges get their own subdir, `chainparamsbase.cpp:39-56`). Base58 111/196/239, HRP `tb`. |
+| signet | **unknown** | Magic is derived at runtime from the challenge (`kernel::GetSignetMessageStart`, `:532`); for the default signet it is commonly cited as `0a03cf40` (not verified from source here). P2P 38333, RPC 38332, subdir `signet` (custom challenges get their own subdir, `chainparamsbase.cpp:39-56`). Base58 111/196/239, HRP `tb`. |
 | regtest | `fabfb5da` is mislabelled **"Old Test Network"** in `BLOCKCHAINS` (`ArmoryUtils.py:331`) | magic `fabfb5da`, P2P 18444, RPC **18443**, subdir `regtest`, base58 111/196/239, HRP **`bcrt`** (`:620-678`; `chainparamsbase.cpp:73`) |
 
 - Other hard-coding: `ArmoryUtils.py:1441` hard-codes `'\x6f'` for testnet, and `NETWORKS` (`:334-339`) maps a version byte to a network name. Testnet4, signet and regtest all share the testnet base58 bytes, so **the network cannot be inferred from a base58 address**. The rewrite needs an explicit `Network` enum.
@@ -309,7 +316,7 @@ Armory's value is offline key management, paper and fragmented backups, lockboxe
 ### 4.2 Primary backend: Bitcoin Core JSON-RPC with descriptor watch-only wallets
 
 **Wallet model.**
-- Each online Armory wallet or lockbox maps to one Core wallet, created with `createwallet name=armory-<walletId> disable_private_keys=true blank=true load_on_startup=true`. Since 23.0 descriptors are the default and the only type (`release-notes-23.0.md:171-173`; legacy wallets cannot be created since 26.0 and are gone in 30.0).
+- Each online Armory wallet or lockbox maps to one Core wallet, created with `createwallet name=armory-<walletId> disable_private_keys=true blank=true load_on_startup=true`. Descriptor wallets have been the default since 23.0 (`release-notes-23.0.md:171-173`), legacy wallet creation was disabled in 26.0 (`release-notes-26.0.md:176`), and legacy wallets were removed in 30.0.
 - **Armory 1.x addresses do not use a BIP32 chain.** They come from Armory's chaincode-based derivation, typically with **uncompressed** pubkeys. Ranged `xpub/*` descriptors therefore do not apply. Import each address as an individual descriptor:
   - `pkh(<pubkey hex, 65-byte uncompressed or 33-byte compressed>)` for single-sig P2PKH. Uncompressed keys are valid in `pkh()`; `importdescriptors` accepts `pkh(<pubkey>)` (Core `test/functional/wallet_importdescriptors.py:145-164`).
   - `sh(multi(M,<pk1>,...,<pkN>))` for lockboxes. Use `multi` in Armory's exact key order, not `sortedmulti`, unless the lockbox script sorts its keys.
@@ -328,7 +335,7 @@ Armory's value is offline key management, paper and fragmented backups, lockboxe
 | Health, network, sync progress, prune state | `getblockchaininfo` (`chain`, `blocks`, `headers`, `initialblockdownload`, `verificationprogress`, `pruned`, `pruneheight`) | long-standing (named as a `getinfo` replacement in the 0.16 notes) |
 | Node version and relay fee | `getnetworkinfo` (`version`, `subversion`, `relayfee`, `incrementalfee`) | — |
 | Create/load watch-only wallet | `createwallet` (`disable_private_keys`, `blank`, `descriptors`), `loadwallet`, `listwallets`, `unloadwallet` | **0.21** for descriptor wallets |
-| Register addresses or scripts | `importdescriptors`, `getdescriptorinfo` (checksum), `listdescriptors` | **0.21** (`getdescriptorinfo` 0.17) |
+| Register addresses or scripts | `importdescriptors`, `getdescriptorinfo` (checksum), `listdescriptors` | **0.21** (`getdescriptorinfo` 0.18, `release-notes-0.18.0.md`; `listdescriptors` 22.0) |
 | Balances | `getbalances` (`mine.trusted`, `untrusted_pending`, `immature`; with private keys disabled these are the watch-only totals) | 0.19 |
 | UTXOs for coin control | `listunspent` (`minconf`, `addresses`, `include_unsafe`, `query_options`) | — |
 | History / ledger | `listtransactions "*" count skip include_watchonly`, `listsinceblock <blockhash>` for incremental sync, `gettransaction <txid> include_watchonly verbose` | — |
@@ -395,6 +402,7 @@ Armory's value is offline key management, paper and fragmented backups, lockboxe
 | `estimatefee` with a 10 000 sat/kB default and a zero-fee "priority" path | `estimatesmartfee` in sat/vB, never below `relayfee`; user override in sat/vB; RBF (BIP125 / full-RBF default) aware |
 | SDM launching bitcoind, editing `bitcoin.conf`, guardian SIGKILL | Detect a running node. Optionally offer a systemd `--user` unit or a launchd plist template. Never write `bitcoin.conf`. |
 | Bootstrap torrent, announce fetch, versions.txt, bug-report POST, internet probe | Delete. Release notifications, if wanted at all, should come from an opt-in check against a signed feed the new project controls. |
+| Reorg detection and unwind using Armory's own block copy (`ReorgUpdater.h`) | **Core RPC:** `listsinceblock <last_seen_hash> ... include_removed=true` returns a `removed[]` array for txs dropped by a reorg. Store the last processed block hash; `gettransaction.confirmations` ≤ 0 marks conflicted or unconfirmed txs. **Electrum:** a `blockchain.scripthash.subscribe` status change plus a height regression on `blockchain.headers.subscribe` triggers a re-fetch of `get_history` for the affected scripts. |
 | Testnet = `--testnet` boolean | `--network {mainnet,testnet3,testnet4,signet,regtest}` driving magic (for display only), ports, datadir subdir, base58 bytes and bech32 HRP |
 
 ---
