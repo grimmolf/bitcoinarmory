@@ -23,7 +23,7 @@ pub fn encode(data: &[u8]) -> String {
 pub fn decode(s: &str) -> Result<Vec<u8>> {
     let nibbles: Vec<u8> =
         s.chars().map(|c| ALPHABET.iter().position(|&a| a as char == c).unwrap_or(0) as u8).collect();
-    if nibbles.len() % 2 != 0 {
+    if !nibbles.len().is_multiple_of(2) {
         return Err(Error::InvalidLength { expected: nibbles.len() + 1, got: nibbles.len() });
     }
     Ok(nibbles.chunks(2).map(|p| (p[0] << 4) | p[1]).collect())

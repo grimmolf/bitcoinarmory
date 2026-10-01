@@ -9,7 +9,8 @@ mod app;
 mod screens;
 mod widgets;
 
-use std::path::PathBuf;
+use std::fs::{File, TryLockError};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -31,6 +32,8 @@ pub fn run(setup: Setup) -> Result<()> {
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
         anyhow::bail!("the terminal interface needs a terminal; use the commands (see `armory --help`)");
     }
+    // Held until return; the OS drops the lock on any exit, a crash included.
+    let _lock = lock(&setup.ctx.data_root)?;
     let mut app = app::App::new(setup);
     // `init` installs a panic hook that restores the terminal before the panic message.
     let mut terminal = ratatui::try_init().context("cannot initialise the terminal")?;
@@ -48,6 +51,24 @@ pub fn run(setup: Setup) -> Result<()> {
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     r
+}
+
+/// One TUI per data directory (not per network: Settings switches networks in place).
+fn lock(data_root: &Path) -> Result<File> {
+    crate::context::create_private_dir(data_root)?;
+    let mut opts = File::options();
+    opts.create(true).write(true).truncate(false);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let path = data_root.join("tui.lock");
+    let f = opts.open(&path).with_context(|| format!("opening {}", path.display()))?;
+    match f.try_lock() {
+        Ok(()) => Ok(f),
+        Err(TryLockError::WouldBlock) => {
+            anyhow::bail!("Another Armory TUI is already running on {}", data_root.display())
+        }
+        Err(TryLockError::Error(e)) => Err(e).with_context(|| format!("locking {}", path.display())),
+    }
 }
 
 fn main_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut app::App) -> Result<()> {

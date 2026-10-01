@@ -127,10 +127,10 @@ impl App {
         if !warnings.trim().is_empty() {
             self.set_error(warnings.trim().replace('\n', "; "));
         }
-        if let Some(id) = selected {
-            if let Some(i) = self.wallets.iter().position(|(_, w)| w.id == id) {
-                self.wsel = i;
-            }
+        if let Some(id) = selected
+            && let Some(i) = self.wallets.iter().position(|(_, w)| w.id == id)
+        {
+            self.wsel = i;
         }
         self.wsel = self.wsel.min(self.wallets.len().saturating_sub(1));
         super::screens::clamp(self);
@@ -362,10 +362,10 @@ impl App {
     pub fn poll(&mut self) {
         while let Ok(d) = self.rx.try_recv() {
             self.inflight = self.inflight.saturating_sub(1);
-            if !d.label.is_empty() {
-                if let Some(i) = self.busy.iter().position(|b| *b == d.label) {
-                    self.busy.remove(i);
-                }
+            if !d.label.is_empty()
+                && let Some(i) = self.busy.iter().position(|b| *b == d.label)
+            {
+                self.busy.remove(i);
             }
             let user_job = !d.label.is_empty();
             match d.result {
@@ -453,10 +453,10 @@ impl App {
                 }
                 Modal::Confirm(_) => match k.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        if let Some(Modal::Confirm(mut c)) = self.modals.pop() {
-                            if let Some(f) = c.on_yes.take() {
-                                f(self);
-                            }
+                        if let Some(Modal::Confirm(mut c)) = self.modals.pop()
+                            && let Some(f) = c.on_yes.take()
+                        {
+                            f(self);
                         }
                     }
                     KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
@@ -469,14 +469,14 @@ impl App {
                         self.modals.pop();
                         return;
                     }
-                    if f.key(k) {
-                        if let Some(Modal::Form(mut f)) = self.modals.pop() {
-                            let values = f.values();
-                            let depth = self.modals.len();
-                            if let Err(e) = (f.on_submit)(self, &values) {
-                                f.error = Some(format!("{e:#}"));
-                                self.modals.insert(depth, Modal::Form(f));
-                            }
+                    if f.key(k)
+                        && let Some(Modal::Form(mut f)) = self.modals.pop()
+                    {
+                        let values = f.values();
+                        let depth = self.modals.len();
+                        if let Err(e) = (f.on_submit)(self, &values) {
+                            f.error = Some(format!("{e:#}"));
+                            self.modals.insert(depth, Modal::Form(f));
                         }
                     }
                 }

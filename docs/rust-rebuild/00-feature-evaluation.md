@@ -308,7 +308,7 @@ integration test for its CLI command.
 |---|---|---|
 | MI-01..07 main window, menus, ledger, sorting, paging, row actions, status bar | B | TUI screens and key bindings (§5); `armory history` with `--sort`, `--limit`, `--offset` |
 | MI-08 `bitcoin:` URI handler | B | Optional `.desktop` file (Fedora) and app bundle `CFBundleURLTypes` (macOS) that open `armory tui --uri` |
-| MI-09 single instance | B | Lock file in the runtime dir per datadir |
+| MI-09 single instance | B | `<datadir>/tui.lock` held with `File::try_lock` by the TUI only (CLI commands are unaffected) |
 | MI-10..12 tray, minimize | C | Not applicable to a terminal app |
 | MI-13..15 shutdown, startup, heartbeat | B | Async runtime; graceful SIGINT/SIGTERM handling |
 | MI-16 logging | B | `tracing` to `$XDG_STATE_HOME/armory/logs`; secrets never logged |
@@ -386,6 +386,6 @@ key exercised, a payment through the dialogs against regtest Core). Every delive
 | Tools | TL-01, 04 (`tx broadcast --raw`), 10 (OSC 52 copy in the TUI) | TL-02 log export and MI-16 logging (no log yet); TL-03 EC calculator; TL-11 explorer links |
 | Node | ND-03/04/05, 06, 09 (verification progress), 10 (30 s polling), 11, 12 (`--rescan-from`), 14 (`config unset`), 18/19, 21 (status-line notice), 22 (warns below 29), 24, 25 | ND-01 service templates |
 | Settings | `config list/set/unset/path`; TUI Settings (network, node connection, save as defaults) | `config get/reset`, `import-legacy`, per-wallet keys |
-| Shell | HU-01, 03/04/13 (man page, docs), 09 (licence in `about`), 10 (empty-state guidance), MI-01..07, 13–15, 20/21, 22, 24/25; Fedora RPM, Homebrew formula, portable archive | MI-08 URI handler, MI-09 single-instance lock, MI-17 i18n, MI-18 `NO_COLOR` |
+| Shell | HU-01, 03/04/13 (man page, docs), 09 (licence in `about`), 10 (empty-state guidance), MI-01..07, 09 (TUI lock), 13–15, 20/21, 22, 24/25; Fedora RPM, Homebrew formula, portable archive | MI-08 URI handler, MI-17 i18n, MI-18 `NO_COLOR` |
 | Later phases | — | Daemon (§4.12, D-5), plugins PL-03/04, goatpig 0.97 `.lmdb` import, Electrum backend |
 

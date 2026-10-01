@@ -144,10 +144,11 @@ pub fn import_wallet(ctx: &Context, src: &Path, replace: bool) -> Result<WalletF
     if w.network != ctx.network.legacy() {
         bail!("wallet {} is for {:?}, not {}", w.id(), w.network, ctx.network.dir_name());
     }
-    if let Ok(existing) = open_wallet(ctx, &w.id()) {
-        if existing.wallet.id() == w.id() && !replace {
-            bail!("wallet {} already exists at {} (use --replace)", w.id(), existing.paths.main.display());
-        }
+    if let Ok(existing) = open_wallet(ctx, &w.id())
+        && existing.wallet.id() == w.id()
+        && !replace
+    {
+        bail!("wallet {} already exists at {} (use --replace)", w.id(), existing.paths.main.display());
     }
     let dest = ctx.wallet_dir()?.join(w.default_file_name());
     let paths = store::WalletPaths::new(&dest);
@@ -220,10 +221,10 @@ fn bitcoin_base58_check(s: &str) -> Result<Vec<u8>> {
 /// Find which wallet holds an address.
 pub fn find_address(ctx: &Context, address: &str) -> Result<(WalletFile, [u8; 20])> {
     for f in list_wallets(ctx)? {
-        if let Ok(h) = decode_address(&f, address) {
-            if f.wallet.record_by_hash160(&h).is_some() {
-                return Ok((WalletFile::open(&f.paths.main)?, h));
-            }
+        if let Ok(h) = decode_address(&f, address)
+            && f.wallet.record_by_hash160(&h).is_some()
+        {
+            return Ok((WalletFile::open(&f.paths.main)?, h));
         }
     }
     bail!("address {address} is not in any wallet")

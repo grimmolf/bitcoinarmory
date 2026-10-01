@@ -48,7 +48,7 @@ pub fn decrypt_cfb(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> 
 }
 
 fn check_blocks(data: &[u8]) -> Result<()> {
-    if data.len() % 16 != 0 {
+    if !data.len().is_multiple_of(16) {
         return Err(Error::InvalidLength { expected: data.len().next_multiple_of(16), got: data.len() });
     }
     Ok(())

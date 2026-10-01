@@ -143,7 +143,7 @@ fn hex(b: &[u8]) -> String {
 
 fn unhex(s: &str) -> Option<Vec<u8>> {
     let c: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    if c.len() % 2 != 0 || !c.chars().all(|x| x.is_ascii_hexdigit()) {
+    if !c.len().is_multiple_of(2) || !c.chars().all(|x| x.is_ascii_hexdigit()) {
         return None;
     }
     Some((0..c.len() / 2).map(|i| u8::from_str_radix(&c[2 * i..2 * i + 2], 16).unwrap()).collect())
@@ -201,10 +201,10 @@ pub fn parse_fragment_text(text: &str) -> Vec<FragmentInput> {
         let key = key.trim().to_ascii_lowercase();
         if key == "id" {
             out.push(FragmentInput { id_line: val.trim().into(), lines: Vec::new() });
-        } else if ["f1", "f2", "f3", "f4"].contains(&key.as_str()) {
-            if let Some(f) = out.last_mut() {
-                f.lines.push(val.trim().into());
-            }
+        } else if ["f1", "f2", "f3", "f4"].contains(&key.as_str())
+            && let Some(f) = out.last_mut()
+        {
+            f.lines.push(val.trim().into());
         }
     }
     out

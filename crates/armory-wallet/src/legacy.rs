@@ -345,10 +345,10 @@ impl LegacyWallet {
     pub fn chained(&self) -> BTreeMap<i64, &AddressRecord> {
         let mut m = BTreeMap::new();
         for e in &self.entries {
-            if let Entry::Key { record, .. } = e {
-                if record.chain_index >= 0 {
-                    m.insert(record.chain_index, record);
-                }
+            if let Entry::Key { record, .. } = e
+                && record.chain_index >= 0
+            {
+                m.insert(record.chain_index, record);
             }
         }
         m
@@ -431,10 +431,10 @@ impl LegacyWallet {
     /// `setComment`: zero the body of any existing comment for this hash, then append a new one.
     pub fn set_address_comment(&mut self, hash: [u8; 20], comment: &str) {
         for e in &mut self.entries {
-            if let Entry::AddrComment { hash: h, comment: c } = e {
-                if *h == hash {
-                    c.iter_mut().for_each(|b| *b = 0);
-                }
+            if let Entry::AddrComment { hash: h, comment: c } = e
+                && *h == hash
+            {
+                c.iter_mut().for_each(|b| *b = 0);
             }
         }
         self.entries.push(Entry::AddrComment { hash, comment: comment.as_bytes().to_vec() });
@@ -442,10 +442,10 @@ impl LegacyWallet {
 
     pub fn set_tx_comment(&mut self, hash: [u8; 32], comment: &str) {
         for e in &mut self.entries {
-            if let Entry::TxComment { hash: h, comment: c } = e {
-                if *h == hash {
-                    c.iter_mut().for_each(|b| *b = 0);
-                }
+            if let Entry::TxComment { hash: h, comment: c } = e
+                && *h == hash
+            {
+                c.iter_mut().for_each(|b| *b = 0);
             }
         }
         self.entries.push(Entry::TxComment { hash, comment: comment.as_bytes().to_vec() });
@@ -568,10 +568,11 @@ impl LegacyWallet {
             }
             n += 1;
         }
-        if !self.is_watching_only() && (!self.flags.encrypted || key.is_some()) {
-            if let Some(last) = self.chained().keys().next_back() {
-                self.private_key(*last, key)?;
-            }
+        if !self.is_watching_only()
+            && (!self.flags.encrypted || key.is_some())
+            && let Some(last) = self.chained().keys().next_back()
+        {
+            self.private_key(*last, key)?;
         }
         Ok(n)
     }
@@ -698,10 +699,10 @@ impl LegacyWallet {
         let mut plain: Vec<(usize, Zeroizing<[u8; 32]>)> = Vec::new();
         let root_plain = self.materialised_priv(&self.root.clone(), old_key)?.ok_or(Error::WatchingOnly)?;
         for (i, e) in self.entries.iter().enumerate() {
-            if let Entry::Key { record, .. } = e {
-                if let Some(p) = self.materialised_priv(record, old_key)? {
-                    plain.push((i, p));
-                }
+            if let Entry::Key { record, .. } = e
+                && let Some(p) = self.materialised_priv(record, old_key)?
+            {
+                plain.push((i, p));
             }
         }
         let new_key = match &new {
@@ -871,10 +872,10 @@ impl LegacyWallet {
             .iter()
             .position(|e| matches!(e, Entry::Key { record, .. } if &record.addr160 == h))
             .ok_or(Error::NoSuchAddress)?;
-        if let Entry::Key { record, .. } = &self.entries[pos] {
-            if !record.is_imported() {
-                return Err(Error::NotImported);
-            }
+        if let Entry::Key { record, .. } = &self.entries[pos]
+            && !record.is_imported()
+        {
+            return Err(Error::NotImported);
         }
         self.entries[pos] = Entry::Deleted { data: vec![0; 20 + RECORD_LEN - 2] };
         Ok(())

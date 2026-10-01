@@ -17,8 +17,8 @@ URL:            https://github.com/grimmolf/bitcoinarmory
 Source0:        %{url}/archive/%{commit_ref}/bitcoinarmory-%{version}.tar.gz
 
 ExclusiveArch:  %{rust_arches}
-BuildRequires:  cargo >= 1.85
-BuildRequires:  rust >= 1.85
+BuildRequires:  cargo >= 1.89
+BuildRequires:  rust >= 1.89
 BuildRequires:  gcc
 
 %description

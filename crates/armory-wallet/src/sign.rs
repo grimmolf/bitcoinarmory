@@ -199,15 +199,15 @@ pub fn finalize(psbt: &mut Psbt) -> Result<()> {
             let (m, keys) = crate::lockbox::script_keys(script.as_bytes())?;
             let mut sigs = Vec::new();
             for k in &keys {
-                if let Ok(pk) = bitcoin::PublicKey::from_slice(k) {
-                    if let Some(sig) = inp.partial_sigs.get(&pk) {
-                        if !multisig_sig_valid(&tx, i, spk.is_p2wsh(), &script, out.value, &pk, sig) {
-                            return Err(ModernError::Invalid(format!(
-                                "input {i}: the signature of key {pk} is invalid"
-                            )));
-                        }
-                        sigs.push(sig.to_vec());
+                if let Ok(pk) = bitcoin::PublicKey::from_slice(k)
+                    && let Some(sig) = inp.partial_sigs.get(&pk)
+                {
+                    if !multisig_sig_valid(&tx, i, spk.is_p2wsh(), &script, out.value, &pk, sig) {
+                        return Err(ModernError::Invalid(format!(
+                            "input {i}: the signature of key {pk} is invalid"
+                        )));
                     }
+                    sigs.push(sig.to_vec());
                 }
             }
             if sigs.len() < usize::from(m) {

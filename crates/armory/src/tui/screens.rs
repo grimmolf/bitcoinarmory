@@ -1418,9 +1418,10 @@ fn history_key(app: &mut App, k: KeyEvent) -> Result<()> {
             }
             _ => {}
         }
-        if k.code == KeyCode::Enter {
-            if let Some(u) = app.wallet_data().and_then(|d| d.utxos.get(app.screens.coin_sel)).cloned() {
-                app.show(
+        if k.code == KeyCode::Enter
+            && let Some(u) = app.wallet_data().and_then(|d| d.utxos.get(app.screens.coin_sel)).cloned()
+        {
+            app.show(
                     "Coin",
                     format!(
                         "Outpoint:      {}:{}\nAmount:        {} BTC\nConfirmations: {}\nAddress:       {}\nDescriptor:    {}",
@@ -1432,7 +1433,6 @@ fn history_key(app: &mut App, k: KeyEvent) -> Result<()> {
                         u.descriptor.unwrap_or_default()
                     ),
                 );
-            }
         }
         return Ok(());
     }

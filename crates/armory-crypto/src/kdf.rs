@@ -24,7 +24,7 @@ pub struct KdfParams {
 impl KdfParams {
     pub fn validate(&self) -> Result<()> {
         let mem = self.memory_bytes as usize;
-        if mem < 2 * HSZ || mem % HSZ != 0 {
+        if mem < 2 * HSZ || !mem.is_multiple_of(HSZ) {
             return Err(Error::KdfParams("memory must be a multiple of 64 and at least 128"));
         }
         Ok(())

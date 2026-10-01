@@ -383,3 +383,13 @@ fn a_panicking_job_is_reported_not_fatal() {
     assert!(app.busy.is_empty());
     assert!(top_view(&app).contains("internal error (please report): kaboom"), "{}", top_view(&app));
 }
+
+#[test]
+fn a_second_tui_on_one_datadir_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = super::lock(dir.path()).unwrap();
+    let err = super::lock(dir.path()).unwrap_err().to_string();
+    assert!(err.contains("Another Armory TUI is already running"), "{err}");
+    drop(first);
+    super::lock(dir.path()).unwrap();
+}

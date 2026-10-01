@@ -17,7 +17,7 @@ cargo build --release            # binary at target/release/armory
 cargo test --workspace --release
 ```
 
-Requires Rust 1.85 or newer (`dnf install rust cargo` on Fedora, `brew install rust` or rustup on macOS).
+Requires Rust 1.89 or newer (`dnf install rust cargo` on Fedora, `brew install rust` or rustup on macOS).
 
 ## Try it
 
