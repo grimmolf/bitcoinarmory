@@ -285,6 +285,7 @@ fn regtest_send_through_the_dialogs() {
         rpc.call(None, "generatetoaddress", json!([101, miner])).unwrap();
 
         let (_d, mut app) = setup();
+        wait(&mut app); // the initial refresh against the placeholder node
         app.node.rpc_addr = Some(format!("127.0.0.1:{port}"));
         app.node.rpc_cookie = None;
         app.node.bitcoin_datadir = Some(core_dir.path().into());

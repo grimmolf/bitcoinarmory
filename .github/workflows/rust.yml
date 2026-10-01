@@ -37,7 +37,8 @@ jobs:
           rpm -qlp ~/rpmbuild/RPMS/*/armory-*.rpm
           dnf install -y ~/rpmbuild/RPMS/*/armory-*.rpm
           armory about
-          ls /usr/share/man/man1/armory.1* /usr/share/bash-completion/completions/armory
+          # (the container skips documentation on install, so check the package's file list)
+          test "$(rpm -qlp ~/rpmbuild/RPMS/*/armory-*.rpm | grep -cE 'man1/armory.1|completions/armory$|_armory$|armory.fish$')" = 4
 
   macos:
     runs-on: macos-latest
