@@ -70,8 +70,9 @@ pub struct PsbtSummary {
 }
 
 impl ModernWallet {
-    /// Collect the signing keys (seed plus legacy accounts up to `legacy_count` addresses).
-    pub fn signing_keys(&self, unlocked: &Unlocked, legacy_count: u32) -> Result<WalletKeys> {
+    /// Collect the signing keys: the seed, and legacy-account keys for every handed-out address
+    /// plus `legacy_gap` more (the same range the backend watches).
+    pub fn signing_keys(&self, unlocked: &Unlocked, legacy_gap: u32) -> Result<WalletKeys> {
         let secp = Secp256k1::new();
         let mut legacy = BTreeMap::new();
         let net = self.network;
@@ -79,7 +80,7 @@ impl ModernWallet {
             if a.kind != AccountKind::Legacy135 {
                 continue;
             }
-            for idx in 0..legacy_count.max(a.next_receive) {
+            for idx in 0..a.next_receive + legacy_gap {
                 let k = self.legacy_private_key(unlocked, i, idx)?;
                 let sk = secp256k1::SecretKey::from_slice(&k[..])
                     .map_err(|e| ModernError::Invalid(e.to_string()))?;
@@ -114,8 +115,8 @@ impl ModernWallet {
     }
 
     /// Sign every input this wallet owns. Returns the number of inputs signed.
-    pub fn sign_psbt(&self, unlocked: &Unlocked, psbt: &mut Psbt, legacy_count: u32) -> Result<usize> {
-        let keys = self.signing_keys(unlocked, legacy_count)?;
+    pub fn sign_psbt(&self, unlocked: &Unlocked, psbt: &mut Psbt, legacy_gap: u32) -> Result<usize> {
+        let keys = self.signing_keys(unlocked, legacy_gap)?;
         self.annotate_legacy_inputs(psbt, &keys);
         let secp = Secp256k1::new();
         let used = match psbt.sign(&keys, &secp) {
@@ -191,6 +192,60 @@ pub fn finalize(psbt: &mut Psbt) -> Result<()> {
     Ok(())
 }
 
+/// What a PSBT built by the backend must do, checked before signing.
+#[derive(Debug, Clone)]
+pub struct Expected {
+    /// Payments that must appear exactly (script, satoshis). Empty for a sweep.
+    pub payments: Vec<(ScriptBuf, u64)>,
+    /// For send-max and sweeps: the single destination, which receives everything minus the fee.
+    pub sweep_to: Option<ScriptBuf>,
+    /// Upper bound on the fee in satoshis.
+    pub max_fee: u64,
+}
+
+/// Refuse a PSBT that does not match the request: foreign inputs, missing or altered payments,
+/// outputs to anyone but the requested recipients and this wallet, or an excessive fee. This
+/// protects `--yes` and scripted use against a misbehaving node.
+pub fn check_psbt(psbt: &Psbt, own: &dyn Fn(&ScriptBuf) -> bool, expected: &Expected) -> Result<()> {
+    let bad = |m: String| Err(ModernError::Invalid(format!("refusing to sign: {m}")));
+    let mut input_total = 0u64;
+    for i in 0..psbt.inputs.len() {
+        let Some(out) = prevout(psbt, i) else {
+            return bad(format!("input {i} has no previous output data"));
+        };
+        if !own(&out.script_pubkey) {
+            return bad(format!("input {i} does not belong to this wallet"));
+        }
+        input_total += out.value.to_sat();
+    }
+    let mut unmatched: Vec<(ScriptBuf, u64)> = expected.payments.clone();
+    let mut sweep_amount = None;
+    for o in &psbt.unsigned_tx.output {
+        let v = o.value.to_sat();
+        if let Some(pos) = unmatched.iter().position(|(s, a)| *s == o.script_pubkey && *a == v) {
+            unmatched.remove(pos);
+        } else if expected.sweep_to.as_ref() == Some(&o.script_pubkey) && sweep_amount.is_none() {
+            sweep_amount = Some(v);
+        } else if !own(&o.script_pubkey) {
+            return bad(format!("output to {} was not requested", o.script_pubkey.to_hex_string()));
+        }
+    }
+    if !unmatched.is_empty() {
+        return bad(format!("{} requested payment(s) missing or changed", unmatched.len()));
+    }
+    let out_total: u64 = psbt.unsigned_tx.output.iter().map(|o| o.value.to_sat()).sum();
+    let fee = input_total
+        .checked_sub(out_total)
+        .ok_or_else(|| ModernError::Invalid("outputs exceed inputs".into()))?;
+    if fee > expected.max_fee {
+        return bad(format!("fee {fee} sat exceeds the limit of {} sat", expected.max_fee));
+    }
+    if expected.sweep_to.is_some() && sweep_amount.is_none() {
+        return bad("the destination output is missing".into());
+    }
+    Ok(())
+}
+
 /// Human/JSON summary of a PSBT.
 pub fn summarize(psbt: &Psbt, network: Network, mine: &dyn Fn(&ScriptBuf) -> bool) -> PsbtSummary {
     let mut total = Some(0u64);
@@ -222,7 +277,7 @@ pub fn summarize(psbt: &Psbt, network: Network, mine: &dyn Fn(&ScriptBuf) -> boo
                 || i.final_script_witness.is_some()
         })
         .count();
-    // Rough virtual size: 68 vB per P2WPKH input, 58 per P2TR, 148 per P2PKH.
+    // Rough virtual size: 68 vB per P2WPKH input, 58 per P2TR, 180 per P2PKH (uncompressed key).
     let mut vsize = 11 + psbt.unsigned_tx.output.iter().map(|o| 9 + o.script_pubkey.len()).sum::<usize>();
     for i in 0..psbt.inputs.len() {
         vsize += match prevout(psbt, i).map(|o| o.script_pubkey) {
@@ -271,7 +326,8 @@ mod tests {
 
         let a84 = w.address(0, 0, 0).unwrap();
         let a86 = w.address(tr, 0, 0).unwrap();
-        let aleg = w.address(leg, 0, 1).unwrap();
+        // A lookahead address past the handed-out ones (next_receive is 4 for this fixture).
+        let aleg = w.address(leg, 0, w.accounts[leg].next_receive + 3).unwrap();
         let funding = Transaction {
             version: transaction::Version::TWO,
             lock_time: absolute::LockTime::ZERO,
@@ -312,6 +368,27 @@ mod tests {
         psbt.inputs[1].tap_key_origins.insert(x86, (vec![], (fp, p86)));
         // Input 2: legacy P2PKH, previous transaction only.
         psbt.inputs[2].non_witness_utxo = Some(funding.clone());
+
+        let own_scripts: Vec<ScriptBuf> = [&a84, &a86, &aleg]
+            .iter()
+            .map(|a| a.script_pubkey())
+            .chain([w.address(0, 1, 0).unwrap().script_pubkey()])
+            .collect();
+        let own = |s: &ScriptBuf| own_scripts.contains(s);
+        // As requested: everything to our own change, fee 10_000 sat.
+        let ok = Expected { payments: vec![], sweep_to: None, max_fee: 20_000 };
+        check_psbt(&psbt, &own, &ok).unwrap();
+        // A payment the user asked for that is missing is refused, as is a low fee limit.
+        let dest = ScriptBuf::new_p2wpkh(&bitcoin::WPubkeyHash::all_zeros());
+        assert!(
+            check_psbt(&psbt, &own, &Expected { payments: vec![(dest.clone(), 5)], ..ok.clone() }).is_err()
+        );
+        assert!(check_psbt(&psbt, &own, &Expected { max_fee: 9_999, ..ok.clone() }).is_err());
+        // An output to someone else is refused.
+        let mut evil = psbt.clone();
+        evil.unsigned_tx.output[0].script_pubkey = dest;
+        evil.outputs[0] = Default::default();
+        assert!(check_psbt(&evil, &own, &ok).is_err());
 
         assert_eq!(w.sign_psbt(&u, &mut psbt, 5).unwrap(), 3);
         let summary = summarize(&psbt, Network::Testnet, &|_| false);

@@ -36,3 +36,23 @@ jobs:
       - uses: actions/checkout@v4
       - run: tools/legacy-oracle/build.sh
       - run: diff <(tools/legacy-oracle/build/harness) tools/legacy-oracle/expected-output.txt
+
+  regtest:
+    # End-to-end against a real bitcoind (crates/armory/tests/regtest.rs). Non-blocking until it
+    # has run green once; it is the only test of the online paths against Core itself.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      CORE_VERSION: "29.1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Download Bitcoin Core
+        run: |
+          f=bitcoin-${CORE_VERSION}-x86_64-linux-gnu.tar.gz
+          curl -fsSLO https://bitcoincore.org/bin/bitcoin-core-${CORE_VERSION}/$f
+          curl -fsSLO https://bitcoincore.org/bin/bitcoin-core-${CORE_VERSION}/SHA256SUMS
+          grep " $f\$" SHA256SUMS | sha256sum -c -
+          tar xzf $f
+          echo "ARMORY_BITCOIND=$PWD/bitcoin-${CORE_VERSION}/bin/bitcoind" >> "$GITHUB_ENV"
+      - run: cargo test -p armory --test regtest --release --locked -- --nocapture

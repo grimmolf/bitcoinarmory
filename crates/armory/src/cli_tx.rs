@@ -10,8 +10,9 @@ use std::str::FromStr;
 use anyhow::{Context as _, Result, anyhow, bail};
 use armory_node::core::{Core, DEFAULT_GAP, FundRequest, Rescan};
 use armory_wallet::modern::{AccountKind, ModernWallet};
-use armory_wallet::sign::{self, PsbtSummary};
+use armory_wallet::sign::{self, Expected, PsbtSummary};
 use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::hashes::Hash;
 use bitcoin::psbt::Psbt;
 use bitcoin::{Address, Amount, Denomination, ScriptBuf};
 use clap::{Args, Subcommand};
@@ -40,7 +41,8 @@ pub struct SendArgs {
     /// Send the whole confirmed balance of the account to the single recipient (fee deducted).
     #[arg(long)]
     max: bool,
-    /// Account to spend from and to receive change on.
+    /// Account that receives the change (and, with --max, whose coins are sent). Ordinary sends may
+    /// use coins of any account of the wallet.
     #[arg(long, default_value_t = 0)]
     account: usize,
     #[command(flatten)]
@@ -117,16 +119,33 @@ fn fee_rate(core: &Core, f: &FeeArgs) -> Result<f64> {
 
 /// Scripts of every address the wallet has handed out (plus the lookahead), to recognise its outputs.
 fn own_scripts(w: &ModernWallet) -> Vec<ScriptBuf> {
+    (0..w.accounts.len()).flat_map(|i| account_scripts(w, i)).collect()
+}
+
+/// Scripts of one account (handed-out addresses plus the lookahead; imported legacy keys too).
+fn account_scripts(w: &ModernWallet, i: usize) -> Vec<ScriptBuf> {
     let mut v = Vec::new();
-    for (i, a) in w.accounts.iter().enumerate() {
+    {
+        let a = &w.accounts[i];
         let branches: &[(u32, u32)] = &[(0, a.next_receive), (1, a.next_change)];
         for (b, n) in branches {
             if a.kind == AccountKind::Legacy135 && *b == 1 {
                 continue;
             }
-            for idx in 0..n + 20 {
+            for idx in 0..n + DEFAULT_GAP {
                 if let Ok(addr) = w.address(i, *b, idx) {
                     v.push(addr.script_pubkey());
+                }
+            }
+        }
+        if let Some(l) = &a.legacy {
+            for h in &l.imported_hash160 {
+                if let Ok(bytes) = <[u8; 20]>::try_from(
+                    (0..20)
+                        .map(|k| u8::from_str_radix(&h[2 * k..2 * k + 2], 16).unwrap_or(0))
+                        .collect::<Vec<u8>>(),
+                ) {
+                    v.push(ScriptBuf::new_p2pkh(&bitcoin::PubkeyHash::from_byte_array(bytes)));
                 }
             }
         }
@@ -180,6 +199,13 @@ fn confirm(yes: bool, question: &str) -> Result<()> {
     }
 }
 
+/// What the user asked for; the PSBT from Core is checked against it.
+struct Request {
+    payments: Vec<(ScriptBuf, u64)>,
+    sweep_to: Option<ScriptBuf>,
+    fee_rate: f64,
+}
+
 /// Sign, finalize and broadcast (or write the unsigned PSBT); shared by send and sweep.
 #[allow(clippy::too_many_arguments)]
 fn complete(
@@ -189,12 +215,19 @@ fn complete(
     path: &Path,
     w: &mut ModernWallet,
     mut psbt: Psbt,
+    request: Request,
     unsigned_out: Option<PathBuf>,
     yes: bool,
     comment: Option<String>,
 ) -> Result<()> {
     let scripts = own_scripts(w);
     let summary = sign::summarize(&psbt, w.network, &|s| scripts.contains(s));
+    let max_fee = (request.fee_rate * summary.vsize_estimate as f64 * 2.0) as u64 + 1_000;
+    sign::check_psbt(
+        &psbt,
+        &|s| scripts.contains(s),
+        &Expected { payments: request.payments, sweep_to: request.sweep_to, max_fee },
+    )?;
     if let Some(out) = unsigned_out {
         write_psbt(&out, &psbt)?;
         print(json, &summary, |s| {
@@ -252,14 +285,40 @@ pub fn send(ctx: &Context, node: &NodeArgs, json: bool, a: SendArgs) -> Result<(
         if outputs.len() != 1 {
             bail!("--max needs exactly one recipient");
         }
-        let utxos = core.utxos(&w.id, 1)?;
+        let acct = account_scripts(&w, a.account);
+        let utxos: Vec<_> = core
+            .utxos(&w.id, 1)?
+            .into_iter()
+            .filter(|u| {
+                u.address
+                    .as_ref()
+                    .and_then(|x| Address::from_str(x).ok())
+                    .is_some_and(|x| acct.contains(&x.assume_checked().script_pubkey()))
+            })
+            .collect();
         if utxos.is_empty() {
-            bail!("no confirmed coins to send");
+            bail!("no confirmed coins in account {}", a.account);
         }
         outputs[0].1 = utxos.iter().map(|u| u.amount as u64).sum();
         inputs = utxos.iter().map(|u| (u.txid.clone(), u.vout)).collect();
     }
     let rate = fee_rate(&core, &a.fee)?;
+    let request = if a.max {
+        Request {
+            payments: vec![],
+            sweep_to: Some(Address::from_str(&outputs[0].0)?.assume_checked().script_pubkey()),
+            fee_rate: rate,
+        }
+    } else {
+        Request {
+            payments: outputs
+                .iter()
+                .map(|(ad, v)| Ok((Address::from_str(ad)?.assume_checked().script_pubkey(), *v)))
+                .collect::<Result<Vec<_>>>()?,
+            sweep_to: None,
+            fee_rate: rate,
+        }
+    };
     // Make sure Core watches the change address we are about to use.
     let change = w.next_change(a.account)?;
     w.save(&path)?;
@@ -273,7 +332,7 @@ pub fn send(ctx: &Context, node: &NodeArgs, json: bool, a: SendArgs) -> Result<(
         subtract_fee: a.max,
     })?;
     let psbt = Psbt::from_str(&psbt)?;
-    complete(ctx, &core, json, &path, &mut w, psbt, a.unsigned_out, a.yes, a.comment)
+    complete(ctx, &core, json, &path, &mut w, psbt, request, a.unsigned_out, a.yes, a.comment)
 }
 
 pub fn sweep_legacy(ctx: &Context, node: &NodeArgs, json: bool, a: SweepArgs) -> Result<()> {
@@ -286,8 +345,10 @@ pub fn sweep_legacy(ctx: &Context, node: &NodeArgs, json: bool, a: SweepArgs) ->
         if acct.kind != AccountKind::Legacy135 || a.from_account.is_some_and(|f| f != i) {
             continue;
         }
-        for idx in 0..acct.next_receive + DEFAULT_GAP {
-            legacy_scripts.push(w.address(i, 0, idx)?.to_string());
+        for sc in account_scripts(&w, i) {
+            if let Ok(ad) = Address::from_script(&sc, w.network) {
+                legacy_scripts.push(ad.to_string());
+            }
         }
     }
     if legacy_scripts.is_empty() {
@@ -319,6 +380,7 @@ pub fn sweep_legacy(ctx: &Context, node: &NodeArgs, json: bool, a: SweepArgs) ->
         subtract_fee: true,
     })?;
     let psbt = Psbt::from_str(&psbt)?;
+    let request = Request { payments: vec![], sweep_to: Some(dest.script_pubkey()), fee_rate: rate };
     complete(
         ctx,
         &core,
@@ -326,6 +388,7 @@ pub fn sweep_legacy(ctx: &Context, node: &NodeArgs, json: bool, a: SweepArgs) ->
         &path,
         &mut w,
         psbt,
+        request,
         a.unsigned_out,
         a.yes,
         Some("Sweep of Armory 0.93 funds".into()),
@@ -353,6 +416,9 @@ pub fn tx(ctx: &Context, node: &NodeArgs, json: bool, cmd: TxCmd) -> Result<()> 
             eprintln!("{}", summary_text(&sign::summarize(&psbt, w.network, &|x| scripts.contains(x))));
             let (u, _) = m::unlock(ctx, &w)?;
             let n = w.sign_psbt(&u, &mut psbt, DEFAULT_GAP)?;
+            if n == 0 {
+                bail!("wallet {} has no keys for any input of this transaction", w.id);
+            }
             let out = output.unwrap_or(file);
             write_psbt(&out, &psbt)?;
             print(json, &serde_json::json!({"signed_inputs": n, "file": out}), |_| {
