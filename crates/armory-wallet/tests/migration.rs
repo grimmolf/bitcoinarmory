@@ -62,3 +62,21 @@ fn migrate_encrypted_mainnet_wallet() {
 fn w2_key(w: &ModernWallet, u: &armory_wallet::modern::Unlocked, acct: usize, i: u32) -> [u8; 32] {
     *w.legacy_private_key(u, acct, i).unwrap()
 }
+
+#[test]
+fn migrate_with_imported_key_verifies_on_unlock() {
+    let mut old = legacy("armory_DZMmtb2v_.wallet");
+    let h = old.import_private_key(&[0x22; 32], None).unwrap();
+    let mut w = ModernWallet::generate(Network::Testnet, "M", 12, "", None, None, 0).unwrap().wallet;
+    let mut u = w.unlock(None).unwrap();
+    w.migrate_legacy(&mut u, &old, None, None).unwrap();
+    let w = ModernWallet::from_json(&w.to_json().unwrap()).unwrap();
+    let u = w.unlock(None).unwrap();
+    assert_eq!(u.secrets.imported_keys.get(&hex::encode(h)).unwrap(), &hex::encode([0x22u8; 32]));
+    assert!(
+        w.public_descriptors(1, 3)
+            .unwrap()
+            .iter()
+            .any(|d| d.starts_with("addr(m") || d.starts_with("addr(n"))
+    );
+}

@@ -34,6 +34,10 @@ pub enum ModernError {
     WatchingOnly,
     #[error("invalid mnemonic: {0}")]
     Mnemonic(String),
+    #[error(
+        "public account data does not match the secrets ({0}); the wallet file may have been tampered with"
+    )]
+    Tampered(String),
     #[error("no account {0}")]
     NoSuchAccount(usize),
     #[error("{0}")]
@@ -117,9 +121,9 @@ pub struct Secrets {
     /// Legacy accounts: wallet ID -> (root private key hex, chain code hex).
     #[serde(default)]
     pub legacy_roots: BTreeMap<String, (String, String)>,
-    /// Imported private keys (32 bytes hex) of migrated legacy wallets.
+    /// Imported private keys of migrated legacy wallets: hash160 hex -> 32-byte key hex.
     #[serde(default)]
-    pub imported_keys: Vec<String>,
+    pub imported_keys: BTreeMap<String, String>,
 }
 
 impl Drop for Secrets {
@@ -130,7 +134,7 @@ impl Drop for Secrets {
             a.zeroize();
             b.zeroize();
         }
-        for k in &mut self.imported_keys {
+        for k in self.imported_keys.values_mut() {
             k.zeroize();
         }
     }
@@ -186,7 +190,7 @@ mod hex_array {
 }
 
 /// How the secrets are stored.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum SecretBox {
     WatchingOnly,
@@ -214,6 +218,16 @@ pub struct ModernWallet {
     #[serde(default)]
     pub tx_comments: BTreeMap<String, String>,
     pub secrets: SecretBox,
+}
+
+impl std::fmt::Debug for SecretBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SecretBox::WatchingOnly => "WatchingOnly",
+            SecretBox::Plaintext { .. } => "Plaintext(<redacted>)",
+            SecretBox::Encrypted { .. } => "Encrypted(<sealed>)",
+        })
+    }
 }
 
 fn coin_type(network: Network) -> u32 {
@@ -421,9 +435,66 @@ impl ModernWallet {
         let entropy = Zeroizing::new(hex::decode(&secrets.entropy).map_err(invalid)?);
         let master = master_from(&entropy, &secrets.bip39_passphrase, self.network)?;
         if master.fingerprint(&Secp256k1::new()).to_string() != self.id {
-            return Err(invalid("secrets do not belong to this wallet"));
+            return Err(ModernError::Tampered("master fingerprint".into()));
         }
-        Ok(Unlocked { secrets, master })
+        let unlocked = Unlocked { secrets, master };
+        self.verify_public(&unlocked)?;
+        Ok(unlocked)
+    }
+
+    /// Check every account's public data against the secrets: BIP32 xpubs are re-derived from
+    /// their paths, legacy root public keys and chain codes from the migrated roots, imported
+    /// addresses from their keys. Run on every unlock.
+    pub fn verify_public(&self, unlocked: &Unlocked) -> Result<()> {
+        let secp = Secp256k1::new();
+        for (i, a) in self.accounts.iter().enumerate() {
+            match a.kind {
+                AccountKind::Bip84 | AccountKind::Bip86 => {
+                    let path_str =
+                        a.path.clone().ok_or_else(|| ModernError::Tampered(format!("account {i} path")))?;
+                    let want_prefix =
+                        format!("m/{}h/{}h/", a.kind.purpose().unwrap(), coin_type(self.network));
+                    if !path_str.starts_with(&want_prefix) {
+                        return Err(ModernError::Tampered(format!("account {i} path")));
+                    }
+                    let path = DerivationPath::from_str(&path_str.replace('h', "'")).map_err(invalid)?;
+                    let x =
+                        Xpub::from_priv(&secp, &unlocked.master.derive_priv(&secp, &path).map_err(invalid)?);
+                    if a.xpub.as_deref() != Some(x.to_string().as_str()) {
+                        return Err(ModernError::Tampered(format!("account {i} xpub")));
+                    }
+                }
+                AccountKind::Legacy135 => {
+                    let l = a.legacy.as_ref().ok_or_else(|| ModernError::Tampered(format!("account {i}")))?;
+                    let (root_hex, cc_hex) = unlocked
+                        .secrets
+                        .legacy_roots
+                        .get(&l.wallet_id)
+                        .ok_or_else(|| ModernError::Tampered(format!("account {i} legacy id")))?;
+                    let root: Zeroizing<[u8; 32]> = Zeroizing::new(
+                        hex::decode(root_hex).map_err(invalid)?.try_into().map_err(|_| invalid("key"))?,
+                    );
+                    let pubk = armory_crypto::chain::public_key(&root)?;
+                    if hex::encode(pubk) != l.root_pubkey || *cc_hex != l.chaincode {
+                        return Err(ModernError::Tampered(format!("account {i} legacy root")));
+                    }
+                    for h in &l.imported_hash160 {
+                        let k = unlocked
+                            .secrets
+                            .imported_keys
+                            .get(h)
+                            .ok_or_else(|| ModernError::Tampered(format!("account {i} imported key")))?;
+                        let k: [u8; 32] =
+                            hex::decode(k).map_err(invalid)?.try_into().map_err(|_| invalid("key"))?;
+                        let pk = armory_crypto::chain::public_key(&k)?;
+                        if hex::encode(armory_crypto::hash::hash160(&pk)) != *h {
+                            return Err(ModernError::Tampered(format!("account {i} imported key")));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Re-seal the secrets: set, change or remove the passphrase.
@@ -606,7 +677,7 @@ impl ModernWallet {
         let mut imported_hash = Vec::new();
         for r in legacy.imported() {
             let k = legacy.private_key_for(&r.addr160, legacy_key)?;
-            unlocked.secrets.imported_keys.push(hex::encode(*k));
+            unlocked.secrets.imported_keys.insert(hex::encode(r.addr160), hex::encode(*k));
             imported_hash.push(hex::encode(r.addr160));
         }
         unlocked.secrets.legacy_roots.insert(id.clone(), (hex::encode(*root), hex::encode(cc)));
@@ -801,6 +872,18 @@ mod tests {
         let wo = w.watching_only_copy();
         assert!(matches!(wo.unlock(None), Err(ModernError::WatchingOnly)));
         assert_eq!(wo.address(0, 0, 5).unwrap(), w.address(0, 0, 5).unwrap());
+    }
+
+    #[test]
+    fn tampered_xpub_is_detected() {
+        let nw =
+            ModernWallet::generate(Network::Bitcoin, "t", 12, "", Some((b"pw", fast())), None, 0).unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&nw.wallet.to_json().unwrap()).unwrap();
+        let other = ModernWallet::restore(Network::Bitcoin, "x", ABANDON, "", None, 0).unwrap();
+        v["accounts"][0]["xpub"] = other.wallet.accounts[0].xpub.clone().unwrap().into();
+        let w = ModernWallet::from_json(&serde_json::to_vec(&v).unwrap()).unwrap();
+        assert!(matches!(w.unlock(Some(b"pw")), Err(ModernError::Tampered(_))));
+        assert!(format!("{:?}", other.wallet).contains("Plaintext(<redacted>)"));
     }
 
     #[test]

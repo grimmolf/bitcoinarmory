@@ -270,3 +270,41 @@ fn modern_migrate_legacy_wallet() {
     assert_eq!(d.lines().count(), 5);
     assert!(d.lines().all(|l| l.starts_with("pkh(04")));
 }
+
+#[test]
+fn modern_signet_and_check() {
+    let env = Env::new();
+    let created: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "--json",
+        "--network",
+        "signet",
+        "wallet",
+        "create",
+        "--label",
+        "S",
+        "--no-encrypt",
+        "--taproot",
+    ]))
+    .unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    assert!(env.ok(&["--network", "signet", "address", "new", &id]).trim().starts_with("tb1q"));
+    assert!(
+        env.ok(&["--network", "signet", "address", "new", &id, "--account", "1"]).trim().starts_with("tb1p")
+    );
+    assert!(env.ok(&["--network", "signet", "wallet", "check", &id]).contains("matches the secrets"));
+    env.ok(&[
+        "--network",
+        "signet",
+        "wallet",
+        "migrate",
+        s(&fixture("armory_vzgEfJrJ_.wallet")),
+        "--into",
+        &id,
+    ]);
+    let legacy_addr = env.ok(&["--network", "signet", "address", "new", &id, "--account", "2"]);
+    // Receiving resumes at the legacy wallet's next unused index (highest used = 4).
+    let old = armory_wallet::LegacyWallet::parse(&std::fs::read(fixture("armory_vzgEfJrJ_.wallet")).unwrap())
+        .unwrap();
+    assert_eq!(legacy_addr.trim(), old.address(old.record(5).unwrap()));
+    env.ok(&["--network", "signet", "wallet", "check", &id]);
+}

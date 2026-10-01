@@ -61,6 +61,8 @@ pub enum WalletCmd {
         #[arg(long, default_value_t = 100)]
         legacy_count: u32,
     },
+    /// Verify the wallet: secrets match the public account data, addresses derive.
+    Check { id: String },
     /// Show the BIP39 recovery phrase (requires the passphrase).
     ShowSeed { id: String },
     /// Write a copy without any secrets.
@@ -474,6 +476,33 @@ pub fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
             }
             print(json, &out, |o| o.join("\n"));
         }
+        WalletCmd::Check { id } => {
+            let (_, w) = open(ctx, &id)?;
+            let checked_secrets = if w.is_watching_only() {
+                false
+            } else {
+                unlock(ctx, &w)?; // verifies every account against the secrets
+                true
+            };
+            let mut derived = 0;
+            for (i, a) in w.accounts.iter().enumerate() {
+                let branches: &[u32] = if a.kind == AccountKind::Legacy135 { &[0] } else { &[0, 1] };
+                for b in branches {
+                    for idx in 0..3 {
+                        w.address(i, *b, idx)?;
+                        derived += 1;
+                    }
+                }
+            }
+            let r = serde_json::json!({ "id": w.id, "secrets_verified": checked_secrets, "addresses_derived": derived });
+            print(json, &r, |_| {
+                format!(
+                    "Wallet {}: OK.{} {derived} sample addresses derived.",
+                    w.id,
+                    if checked_secrets { " Public data matches the secrets." } else { " Watching-only." }
+                )
+            });
+        }
         WalletCmd::ShowSeed { id } => {
             let (p, w) = open(ctx, &id)?;
             let (u, _) = unlock(ctx, &w)?;
@@ -515,11 +544,11 @@ fn migrate(ctx: &Context, json: bool, a: MigrateArgs) -> Result<()> {
     };
     let legacy_key = legacy_key.as_deref().map(|k| &k[..]);
 
-    let (path, mut w, mnemonic, pass) = match &a.into {
+    let (path, mut w, mnemonic, pass, unlocked) = match &a.into {
         Some(id) => {
             let (p, w) = open(ctx, id)?;
-            let (_, pass) = unlock(ctx, &w)?;
-            (p, w, None, pass)
+            let (u, pass) = unlock(ctx, &w)?;
+            (p, w, None, pass, Some(u))
         }
         None => {
             let pass = new_protection(ctx, a.no_encrypt)?;
@@ -534,10 +563,13 @@ fn migrate(ctx: &Context, json: bool, a: MigrateArgs) -> Result<()> {
                 now(),
             )?;
             let path = ctx.wallet_dir()?.join(nw.wallet.file_name());
-            (path, nw.wallet, Some(nw.mnemonic), pass)
+            (path, nw.wallet, Some(nw.mnemonic), pass, None)
         }
     };
-    let mut u = w.unlock(pass.as_ref().map(|p| p.as_bytes()))?;
+    let mut u = match unlocked {
+        Some(u) => u,
+        None => w.unlock(pass.as_ref().map(|p| p.as_bytes()))?,
+    };
     let acct = w.migrate_legacy(&mut u, &legacy, legacy_key, pass.as_ref().map(|p| p.as_bytes()))?;
     w.save(&path)?;
     let v = view(&path, &w);

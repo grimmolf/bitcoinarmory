@@ -21,6 +21,7 @@ New wallets use standard, interoperable key derivation, stored in a new versione
 | Encryption | Secrets (seed entropy, BIP39 passphrase, legacy roots, imported keys) sealed with **XChaCha20-Poly1305** under an **Argon2id** key (default m = 256 MiB, t = 3, p = 1, parameters stored per file). The header (format, version, network, ID) is bound as associated data. |
 | Public data | xpubs, address indexes, labels and comments stay readable so receiving and balance checks never need the passphrase (same property as Armory 1.35 "pending" keys) |
 | Watching-only | The same file with no secrets section |
+| Integrity | Public data cannot be verified without the passphrase, so every unlock (and `armory wallet check`) re-derives each xpub from its path and each legacy root public key, chain code and imported address from the secrets, and refuses a file whose public data was altered |
 
 Paper and fragmented backups (D-2) keep Armory's Easy16 line format, applied to the 16/32-byte BIP39 entropy,
 and new fragment sets use CSPRNG coefficients. The 24 words are also shown, so any BIP39 wallet can restore.
