@@ -37,6 +37,11 @@ Without `--datadir`, wallets (`<id>.armory`) live in `~/.local/share/armory/<net
 `~/Library/Application Support/Armory/<network>/wallets` (macOS). Wallet files are created with mode 0600 and
 world-readable wallets are refused.
 
+`<datadir>/armory.log` (mode 0600; `armory about` prints the path) gets one line per command run (the subcommand
+path only, e.g. `wallet create`), every note printed to stderr and the final error. Passphrases, pasted secrets,
+prompts and command arguments are never written. It is not rotated; delete it any time. If it cannot be opened,
+commands run without it.
+
 ## Using Bitcoin Core
 
 Run Bitcoin Core 29 or newer (`server=1`). Armory uses cookie authentication from the Bitcoin data
@@ -60,6 +65,7 @@ armory wallet sweep-legacy <ID>                              # Armory 0.93 funds
 Run `armory` (or `armory tui`) with the same global options as the commands (`--network`, `--datadir`,
 the node options; values from `armory.toml` apply too). `1`–`0` or Tab switch screens, `[` `]` switch
 wallet, `?` shows the keys of the screen, `:` runs any `armory` command and shows its output.
+Set `NO_COLOR` (non-empty, see no-color.org) to draw without colour; the selected row is shown reversed.
 
 The TUI never has a second implementation of an action. Transactions go through the shared
 prepare/execute operations (`src/ops.rs`); every other action runs the very same CLI command in-process,

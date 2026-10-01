@@ -332,9 +332,11 @@ fn run(cli: Cli) -> Result<()> {
                     write_stdout(&buf)
                 }
                 _ => {
+                    let log = config::log_path(cli.datadir.as_deref());
                     outln!(
-                        "Armory {} (Rust)\nCopyright (C) 2011-2015 Armory Technologies, Inc.; Rust rebuild by the Armory contributors.\nLicensed under the GNU Affero General Public License v3 or later; see LICENSE.\nNo warranty. This program never contacts any server other than your own Bitcoin Core node.",
-                        env!("CARGO_PKG_VERSION")
+                        "Armory {} (Rust)\nCopyright (C) 2011-2015 Armory Technologies, Inc.; Rust rebuild by the Armory contributors.\nLicensed under the GNU Affero General Public License v3 or later; see LICENSE.\nNo warranty. This program never contacts any server other than your own Bitcoin Core node.\nLog file (commands, notes, errors; never secrets): {}",
+                        env!("CARGO_PKG_VERSION"),
+                        log.map_or("unavailable".into(), |p| p.display().to_string())
                     );
                     Ok(())
                 }
@@ -552,8 +554,10 @@ fn address(ctx: &Context, json: bool, cmd: LegacyAddressCmd) -> Result<()> {
 /// prompts answered from `inputs`.
 pub(crate) fn run_captured(args: &[String], inputs: io::Inputs) -> (Result<()>, zeroize::Zeroizing<String>) {
     io::capture(inputs, || {
-        let cli = Cli::try_parse_from(std::iter::once("armory".to_string()).chain(args.iter().cloned()))?;
-        run(cli)
+        let m = Cli::command()
+            .try_get_matches_from(std::iter::once("armory".to_string()).chain(args.iter().cloned()))?;
+        log_command(&m);
+        run(Cli::from_arg_matches(&m)?)
     })
 }
 
@@ -576,7 +580,21 @@ fn parse_cli() -> Cli {
         }
     }
     let matches = cmd.get_matches();
+    if let Some(p) = config::log_path(config::early_datadir(&args).as_deref()) {
+        io::open_log(&p);
+    }
+    log_command(&matches);
     Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
+/// Log the subcommand path only (`wallet create`), never arguments.
+fn log_command(mut m: &clap::ArgMatches) {
+    let mut path = Vec::new();
+    while let Some((name, sub)) = m.subcommand() {
+        path.push(name);
+        m = sub;
+    }
+    io::log(&format!("command {}", if path.is_empty() { "tui".into() } else { path.join(" ") }));
 }
 
 fn main() -> ExitCode {
@@ -585,6 +603,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
+            io::log(&format!("error: {e:#}"));
             let wrong_pass = matches!(
                 e.downcast_ref::<armory_wallet::Error>(),
                 Some(armory_wallet::Error::WrongPassphrase)

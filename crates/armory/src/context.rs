@@ -47,6 +47,14 @@ impl Network {
     }
 }
 
+/// `--datadir`, or the platform data directory.
+pub fn data_root(datadir: Option<&Path>) -> Option<PathBuf> {
+    match datadir {
+        Some(d) => Some(d.to_path_buf()),
+        None => directories::ProjectDirs::from("", "", "Armory").map(|p| p.data_dir().to_path_buf()),
+    }
+}
+
 /// Where Armory keeps its files.
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -57,13 +65,8 @@ pub struct Context {
 
 impl Context {
     pub fn new(network: Network, datadir: Option<PathBuf>, passphrase_file: Option<PathBuf>) -> Result<Self> {
-        let data_root = match datadir {
-            Some(d) => d,
-            None => directories::ProjectDirs::from("", "", "Armory")
-                .context("cannot determine the home directory; pass --datadir")?
-                .data_dir()
-                .to_path_buf(),
-        };
+        let data_root =
+            data_root(datadir.as_deref()).context("cannot determine the home directory; pass --datadir")?;
         Ok(Self { network, data_root, passphrase_file })
     }
 

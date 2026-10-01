@@ -24,6 +24,11 @@ pub fn path(datadir: Option<&Path>) -> Option<PathBuf> {
     }
 }
 
+/// The log file: `<data root>/armory.log`.
+pub fn log_path(datadir: Option<&Path>) -> Option<PathBuf> {
+    crate::context::data_root(datadir).map(|d| d.join("armory.log"))
+}
+
 pub fn load(path: &Path) -> Result<BTreeMap<String, String>> {
     if !path.exists() {
         return Ok(BTreeMap::new());

@@ -221,13 +221,13 @@ pub fn backup(ctx: &Context, json: bool, cmd: BackupCmd) -> Result<()> {
                 None => outln!("{doc}"),
             }
             for (what, c) in &codes {
-                noteln!(
+                noteln_unlogged!(
                     "SecurePrint code ({what}): {c}   <- write it down separately; it is NOT on the sheet"
                 );
             }
             if json {
                 let v = serde_json::json!({ "wallet": w.id, "secureprint_codes": codes });
-                noteln!("{v}");
+                noteln_unlogged!("{v}");
             }
         }
         BackupCmd::Fragments { id, m: need, n, secureprint, output_dir } => {
@@ -270,7 +270,7 @@ pub fn backup(ctx: &Context, json: bool, cmd: BackupCmd) -> Result<()> {
                 }
             }
             if let Some(c) = &code {
-                noteln!(
+                noteln_unlogged!(
                     "SecurePrint code: {c}   <- needed with any {need} fragments; it is NOT on the fragments"
                 );
             }

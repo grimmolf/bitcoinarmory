@@ -100,7 +100,7 @@ Optional, needs local tools:
    4. CLI `wallet migrate --from-lmdb FILE`, TUI Wallets `m` form option, tests, §7 update.
 2. Smaller deferred rows (feature-evaluation §7): WM-17 damaged-wallet recovery, AR-02 no-backup warning,
    BK-03 PDF sheets, MS-12..14 promissory notes (fixtures exist in `fixtures/legacy/`), TL-03 EC calculator,
-   logging (MI-16/TL-02), `config get/reset`, NO_COLOR, `bitcoin:` URI handler.
+   `config get/reset`, `bitcoin:` URI handler.
 3. Release automation: tag-triggered workflow running `packaging/dist.sh` per target, Homebrew sha256.
 4. Phase 3: `armory daemon` (JSON-RPC, decision D-5 in `00-feature-evaluation.md`).
 

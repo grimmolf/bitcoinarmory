@@ -125,6 +125,22 @@ fn every_screen_renders_without_a_node() {
 }
 
 #[test]
+fn no_color_strips_every_colour_but_keeps_the_selection_visible() {
+    use ratatui::style::{Color, Modifier};
+    let (_d, mut app) = setup();
+    wait(&mut app);
+    let cells = |no_color| {
+        let mut t = Terminal::new(TestBackend::new(140, 45)).unwrap();
+        t.draw(|f| super::draw(f, &app, no_color)).unwrap();
+        t.backend().buffer().content.clone()
+    };
+    assert!(cells(false).iter().any(|c| c.fg != Color::Reset || c.bg != Color::Reset));
+    let plain = cells(true);
+    assert!(plain.iter().all(|c| c.fg == Color::Reset && c.bg == Color::Reset));
+    assert!(plain.iter().any(|c| c.modifier.contains(Modifier::REVERSED)));
+}
+
+#[test]
 fn dialogs_run_the_cli_commands() {
     let (_d, mut app) = setup();
     wait(&mut app);

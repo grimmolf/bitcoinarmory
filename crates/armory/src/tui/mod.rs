@@ -47,7 +47,9 @@ pub fn run(setup: Setup) -> Result<()> {
         }
     }));
     let _ = execute!(std::io::stdout(), EnableBracketedPaste);
-    let r = main_loop(&mut terminal, &mut app);
+    // https://no-color.org: set and not empty. Read once; modifiers (bold, reverse) stay.
+    let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+    let r = main_loop(&mut terminal, &mut app, no_color);
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     r
@@ -71,9 +73,24 @@ fn lock(data_root: &Path) -> Result<File> {
     }
 }
 
-fn main_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut app::App) -> Result<()> {
+/// Draw a frame; with `no_color`, strip every colour afterwards. A highlighted cell (one with a
+/// background) turns reversed so the selection stays visible.
+fn draw(f: &mut ratatui::Frame, app: &app::App, no_color: bool) {
+    use ratatui::style::{Color, Modifier};
+    screens::draw(f, app);
+    if no_color {
+        for c in &mut f.buffer_mut().content {
+            if c.bg != Color::Reset {
+                c.modifier |= Modifier::REVERSED;
+            }
+            (c.fg, c.bg, c.underline_color) = (Color::Reset, Color::Reset, Color::Reset);
+        }
+    }
+}
+
+fn main_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut app::App, no_color: bool) -> Result<()> {
     while !app.quit {
-        terminal.draw(|f| screens::draw(f, app))?;
+        terminal.draw(|f| draw(f, app, no_color))?;
         if event::poll(Duration::from_millis(120))? {
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => app.on_key(k),
