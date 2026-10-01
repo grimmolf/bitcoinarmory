@@ -282,7 +282,7 @@ pub fn sweep_key(
     let keys = sweep_keys(&text, w.network)?;
     let core = Core::new(&node.config(), w.network);
     core.status()?;
-    let rate = crate::cli_tx::fee_rate(&core, fee)?;
+    let rate = crate::ops::fee_rate(&core, fee)?;
     let mut txids = Vec::new();
     for key in keys {
         let found = core.scan_utxos(&key.descriptors())?;

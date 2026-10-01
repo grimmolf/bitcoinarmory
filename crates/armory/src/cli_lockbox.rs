@@ -296,7 +296,7 @@ pub fn lockbox(ctx: &Context, node: &NodeArgs, json: bool, cmd: LockboxCmd) -> R
                 payments.push((addr.script_pubkey(), sats));
                 outputs.push((addr.to_string(), sats));
             }
-            let rate = cli_tx::fee_rate(&core, &fee)?;
+            let rate = crate::ops::fee_rate(&core, &fee)?;
             let change = lb.next_change()?;
             save(&p, &lb)?;
             core.import_lockbox(&lb, DEFAULT_GAP, Rescan::Now)?;

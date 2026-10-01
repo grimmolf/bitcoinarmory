@@ -10,6 +10,7 @@ mod cli_node;
 mod cli_tx;
 mod config;
 mod context;
+mod ops;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
