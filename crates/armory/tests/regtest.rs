@@ -123,7 +123,16 @@ fn regtest_end_to_end() {
     mine(&node, &miner, 1);
     let bal = cli.json(&["balance", &id])["confirmed"].as_i64().unwrap();
     assert!(bal < 95_000_000 && bal > 94_900_000, "balance after send: {bal}");
+    // Address book records the recipient.
+    assert!(cli.run(&["addressbook", "list"]).contains(&miner));
     assert!(cli.json(&["history", &id]).as_array().unwrap().len() >= 3);
+
+    // Replace-by-fee: send at 1 sat/vB, then bump to 5 sat/vB before mining.
+    let slow = cli.json(&["send", &id, "--to", &format!("{miner}=0.01"), "--fee-rate", "1", "--yes"]);
+    let slow_txid = slow["txid"].as_str().unwrap().to_string();
+    let bumped = cli.json(&["tx", "bump-fee", &id, &slow_txid, "--fee-rate", "5", "--yes"]);
+    assert_ne!(bumped["txid"], slow["txid"]);
+    mine(&node, &miner, 1);
 
     // Offline flow: unsigned PSBT -> sign -> broadcast.
     let psbt = data.path().join("tx.psbt");

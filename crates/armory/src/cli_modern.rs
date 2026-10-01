@@ -69,6 +69,14 @@ pub enum WalletCmd {
     Check { id: String },
     /// Show the BIP39 recovery phrase (requires the passphrase).
     ShowSeed { id: String },
+    /// List every handed-out address with its private key (WIF). Handle with care.
+    ExportKeys { id: String },
+    /// Remove a wallet from Armory (the file is kept, renamed, until you delete it).
+    Remove {
+        id: String,
+        #[arg(long, short)]
+        yes: bool,
+    },
     /// Write a copy without any secrets.
     ExportWatchonly { id: String, dest: PathBuf },
 }
@@ -173,6 +181,8 @@ pub enum AddressCmd {
         #[arg(long)]
         change: bool,
     },
+    /// Show an address (or a payment request) as a QR code.
+    Qr { text: String },
     /// List the addresses handed out so far.
     List {
         id: String,
@@ -508,6 +518,64 @@ pub fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
                 )
             });
         }
+        WalletCmd::ExportKeys { id } => {
+            let (_, w) = open(ctx, &id)?;
+            let (u, _) = unlock(ctx, &w)?;
+            let mut rows = Vec::new();
+            for (i, a) in w.accounts.iter().enumerate() {
+                let branches: &[(u32, u32)] = if a.kind == AccountKind::Legacy135 {
+                    &[(0, a.next_receive)]
+                } else {
+                    &[(0, a.next_receive), (1, a.next_change)]
+                };
+                for (b, n) in branches {
+                    for idx in 0..*n {
+                        let addr = w.address(i, *b, idx)?;
+                        let (sk, compressed) = w.key_for_address(&u, &addr, 0)?;
+                        let wif =
+                            bitcoin::PrivateKey { compressed, network: w.network.into(), inner: sk }.to_wif();
+                        rows.push(serde_json::json!({"account": i, "branch": b, "index": idx, "address": addr.to_string(), "wif": wif}));
+                    }
+                }
+            }
+            eprintln!("WARNING: anyone who sees these keys can spend the funds of these addresses.");
+            print(json, &rows, |r| {
+                r.iter()
+                    .map(|x| {
+                        format!(
+                            "{}  {}",
+                            x["address"].as_str().unwrap_or(""),
+                            x["wif"].as_str().unwrap_or("")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
+        }
+        WalletCmd::Remove { id, yes } => {
+            let (p, w) = open(ctx, &id)?;
+            crate::cli_tx::confirm(
+                yes,
+                &format!(
+                    "Remove wallet {} ({}) from Armory? Make sure you have its recovery words.",
+                    w.id, w.label
+                ),
+            )?;
+            let stamp = now();
+            for f in [p.clone(), modern::backup_path(&p)] {
+                if f.exists() {
+                    let mut n = f.file_name().unwrap_or_default().to_os_string();
+                    n.push(format!(".removed-{stamp}"));
+                    std::fs::rename(&f, f.with_file_name(n))?;
+                }
+            }
+            print(json, &w.id, |i| {
+                format!(
+                    "Wallet {i} removed (renamed to *.removed-{stamp} in {}).",
+                    p.parent().unwrap().display()
+                )
+            });
+        }
         WalletCmd::ShowSeed { id } => {
             let (p, w) = open(ctx, &id)?;
             let (u, _) = unlock(ctx, &w)?;
@@ -627,6 +695,10 @@ pub fn address(ctx: &Context, json: bool, cmd: AddressCmd) -> Result<()> {
             let a = if change { w.next_change(account)? } else { w.next_receive(account)? };
             w.save(&p)?;
             print(json, &a.to_string(), |a| a.clone());
+        }
+        AddressCmd::Qr { text } => {
+            let q = crate::cli_misc::qr_text(&text)?;
+            print(json, &text, |t| format!("{q}\n{t}"));
         }
         AddressCmd::List { id, account } => {
             let (_, w) = open(ctx, &id)?;

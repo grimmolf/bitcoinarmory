@@ -37,8 +37,11 @@ pub struct FeeArgs {
 pub struct SendArgs {
     id: String,
     /// Recipient as ADDRESS=BTC (repeatable). With --max: just ADDRESS.
-    #[arg(long = "to", required = true)]
+    #[arg(long = "to", required_unless_present = "uri")]
     to: Vec<String>,
+    /// Pay a `bitcoin:` payment request.
+    #[arg(long)]
+    uri: Option<String>,
     /// Send the whole confirmed balance of the account to the single recipient (fee deducted).
     #[arg(long)]
     max: bool,
@@ -100,6 +103,20 @@ pub enum TxCmd {
         #[arg(long, short)]
         output: Option<PathBuf>,
     },
+    /// Replace an unconfirmed transaction with a higher fee (RBF).
+    BumpFee {
+        wallet: String,
+        txid: String,
+        /// New fee rate in sat/vB.
+        #[arg(long)]
+        fee_rate: f64,
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Forget an unconfirmed transaction that will not confirm (its coins become spendable again).
+    Abandon { wallet: String, txid: String },
+    /// Attach a comment to a transaction.
+    Comment { wallet: String, txid: String, text: String },
     /// Convert between PSBT and Armory 0.93 offline-transaction (TXSIGCOLLECT) files.
     Convert {
         file: PathBuf,
@@ -223,7 +240,7 @@ pub(crate) fn summary_text(s: &PsbtSummary) -> String {
     t
 }
 
-fn confirm(yes: bool, question: &str) -> Result<()> {
+pub(crate) fn confirm(yes: bool, question: &str) -> Result<()> {
     if yes {
         return Ok(());
     }
@@ -291,7 +308,21 @@ fn complete(
     Ok(())
 }
 
-pub fn send(ctx: &Context, node: &NodeArgs, json: bool, a: SendArgs) -> Result<()> {
+pub fn send(ctx: &Context, node: &NodeArgs, json: bool, mut a: SendArgs) -> Result<()> {
+    if let Some(u) = &a.uri {
+        let p = crate::cli_misc::PaymentUri::parse(u)?;
+        let amt =
+            p.amount_sat.ok_or_else(|| anyhow!("the payment request has no amount; use --to ADDRESS=BTC"))?;
+        a.to.push(format!("{}={}", p.address, Amount::from_sat(amt).to_string_in(Denomination::Bitcoin)));
+        if a.comment.is_none() {
+            a.comment = match (p.label, p.message) {
+                (Some(l), Some(mg)) => Some(format!("{l}: {mg}")),
+                (l, mg) => l.or(mg),
+            };
+        }
+    }
+    let recipients: Vec<String> =
+        a.to.iter().map(|t| t.split('=').next().unwrap_or("").trim().to_string()).collect();
     let (path, mut w) = m::open(ctx, &a.id)?;
     if w.account(a.account)?.kind == AccountKind::Legacy135 {
         bail!(
@@ -373,7 +404,14 @@ pub fn send(ctx: &Context, node: &NodeArgs, json: bool, a: SendArgs) -> Result<(
         subtract_fee: a.max,
     })?;
     let psbt = Psbt::from_str(&psbt)?;
-    complete(ctx, &core, json, &path, &mut w, psbt, request, a.unsigned_out, a.yes, a.comment)
+    let unsigned = a.unsigned_out.is_some();
+    complete(ctx, &core, json, &path, &mut w, psbt, request, a.unsigned_out, a.yes, a.comment)?;
+    if !unsigned {
+        for r in recipients {
+            crate::cli_misc::AddressBook::note_sent(ctx, &r)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn sweep_legacy(ctx: &Context, node: &NodeArgs, json: bool, a: SweepArgs) -> Result<()> {
@@ -469,6 +507,44 @@ pub fn tx(ctx: &Context, node: &NodeArgs, json: bool, cmd: TxCmd) -> Result<()> 
             print(json, &serde_json::json!({"signed_inputs": n, "file": out}), |_| {
                 format!("Signed {n} input(s); wrote {}.", out.display())
             });
+        }
+        TxCmd::BumpFee { wallet, txid, fee_rate, yes } => {
+            let (path, mut w) = m::open(ctx, &wallet)?;
+            let core = Core::new(&node.config(), w.network);
+            let original: bitcoin::Transaction =
+                bitcoin::consensus::encode::deserialize_hex(&core.wallet_tx_hex(&w.id, &txid)?)?;
+            let scripts = own_scripts(&w);
+            let payments: Vec<(ScriptBuf, u64)> = original
+                .output
+                .iter()
+                .filter(|o| !scripts.contains(&o.script_pubkey))
+                .map(|o| (o.script_pubkey.clone(), o.value.to_sat()))
+                .collect();
+            let psbt = Psbt::from_str(&core.bump_fee_psbt(&w.id, &txid, fee_rate)?)?;
+            let request = Request { payments, sweep_to: None, fee_rate };
+            complete(
+                ctx,
+                &core,
+                json,
+                &path,
+                &mut w,
+                psbt,
+                request,
+                None,
+                yes,
+                Some(format!("Fee bump of {txid}")),
+            )?;
+        }
+        TxCmd::Abandon { wallet, txid } => {
+            let (_, w) = m::open(ctx, &wallet)?;
+            Core::new(&node.config(), w.network).abandon(&w.id, &txid)?;
+            print(json, &txid, |t| format!("Abandoned {t}; its inputs are spendable again."));
+        }
+        TxCmd::Comment { wallet, txid, text } => {
+            let (path, mut w) = m::open(ctx, &wallet)?;
+            w.tx_comments.insert(txid.clone(), text);
+            w.save(&path)?;
+            print(json, &txid, |t| format!("Comment saved for {t}."));
         }
         TxCmd::Convert { file, to, output } => {
             let net = ctx.network.bitcoin();

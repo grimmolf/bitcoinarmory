@@ -156,6 +156,15 @@ pub struct ImportReport {
     pub rescan_from: u64,
 }
 
+/// An unspent output found by [`Core::scan_utxos`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ScannedUtxo {
+    pub txid: String,
+    pub vout: u32,
+    pub script_pubkey: String,
+    pub amount: i64,
+}
+
 /// Parameters for [`Core::fund_psbt`].
 #[derive(Debug, Clone)]
 pub struct FundRequest {
@@ -421,6 +430,44 @@ impl Core {
             .as_str()
             .map(String::from)
             .ok_or_else(|| NodeError::Unexpected("walletcreatefundedpsbt".into()))
+    }
+
+    /// RBF: a PSBT that replaces `txid` at a higher fee rate (`psbtbumpfee` on the watch-only wallet).
+    pub fn bump_fee_psbt(&self, wallet_id: &str, txid: &str, fee_rate: f64) -> Result<String> {
+        let r = self.rpc.call(
+            Some(&Self::wallet_name(wallet_id)),
+            "psbtbumpfee",
+            json!([txid, {"fee_rate": fee_rate}]),
+        )?;
+        r["psbt"].as_str().map(String::from).ok_or_else(|| NodeError::Unexpected("psbtbumpfee".into()))
+    }
+
+    /// Raw hex of a wallet transaction (`gettransaction`).
+    pub fn wallet_tx_hex(&self, wallet_id: &str, txid: &str) -> Result<String> {
+        let r = self.rpc.call(Some(&Self::wallet_name(wallet_id)), "gettransaction", json!([txid, true]))?;
+        r["hex"].as_str().map(String::from).ok_or_else(|| NodeError::Unexpected("gettransaction".into()))
+    }
+
+    /// Forget an unconfirmed transaction that will never confirm (`abandontransaction`).
+    pub fn abandon(&self, wallet_id: &str, txid: &str) -> Result<()> {
+        self.rpc.call(Some(&Self::wallet_name(wallet_id)), "abandontransaction", json!([txid]))?;
+        Ok(())
+    }
+
+    /// Unspent outputs of arbitrary descriptors from the UTXO set (`scantxoutset`), without a
+    /// wallet or rescan; used to sweep private keys.
+    pub fn scan_utxos(&self, descriptors: &[String]) -> Result<Vec<ScannedUtxo>> {
+        let r = self.rpc.call(None, "scantxoutset", json!(["start", descriptors]))?;
+        let arr = r["unspents"].as_array().ok_or_else(|| NodeError::Unexpected("scantxoutset".into()))?;
+        Ok(arr
+            .iter()
+            .map(|u| ScannedUtxo {
+                txid: u["txid"].as_str().unwrap_or("").into(),
+                vout: u["vout"].as_u64().unwrap_or(0) as u32,
+                script_pubkey: u["scriptPubKey"].as_str().unwrap_or("").into(),
+                amount: sats(&u["amount"]),
+            })
+            .collect())
     }
 
     /// `testmempoolaccept` then `sendrawtransaction`; Core's reject reason is returned verbatim.

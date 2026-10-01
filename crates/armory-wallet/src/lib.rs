@@ -15,6 +15,7 @@ pub mod network;
 pub mod record;
 pub mod sign;
 pub mod store;
+pub mod sweep;
 pub mod ustx;
 
 pub use error::{Error, Result};

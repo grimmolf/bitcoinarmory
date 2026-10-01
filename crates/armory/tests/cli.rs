@@ -756,3 +756,39 @@ fn armory_093_offline_transaction_files() {
     env.ok(&["tx", "convert", s(&unsigned), "--to", "psbt", "-o", s(&out)]);
     assert!(env.ok(&["tx", "show", s(&out)]).contains("signed:  1/1"));
 }
+
+#[test]
+fn misc_commands() {
+    let env = Env::new();
+    // Config file provides defaults; the command line wins.
+    env.ok(&["config", "set", "rpc-addr", "127.0.0.1:1"]);
+    assert!(env.ok(&["config", "list"]).contains("127.0.0.1:1"));
+    assert!(!env.run(&["config", "set", "bogus", "x"], None).status.success());
+    // Address book and URIs.
+    let a = "tb1q6rz28mcfaxtmd6v789l9rrlrusdprr9pqcpvkl";
+    env.ok(&["addressbook", "add", a, "Alice"]);
+    assert!(env.ok(&["addressbook", "list"]).contains("Alice"));
+    let uri = env.ok(&["uri", "create", a, "--amount", "0.5", "--label", "Rent & co"]);
+    assert!(uri.trim().ends_with("amount=0.5&label=Rent%20%26%20co"));
+    assert!(env.ok(&["uri", "parse", uri.trim()]).contains("0.5 BTC"));
+    assert!(env.ok(&["address", "qr", uri.trim()]).lines().count() > 10);
+    env.ok(&["addressbook", "remove", a]);
+    // Completions and man page.
+    assert!(env.ok(&["completions", "bash"]).contains("_armory"));
+    assert!(env.ok(&["manpage"]).contains(".TH armory"));
+    // Export keys and remove a wallet.
+    let o = env
+        .run(&["--network", "mainnet", "wallet", "restore", "--no-encrypt"], Some(&format!("{ABANDON}\n")));
+    assert!(o.status.success());
+    env.ok(&["--network", "mainnet", "address", "new", "73c5da0a"]);
+    let keys = env.ok(&["--network", "mainnet", "wallet", "export-keys", "73c5da0a"]);
+    // BIP84 test vector: first receive key.
+    assert!(
+        keys.contains(
+            "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu  KyZpNDKnfs94vbrwhJneDi77V6jF64PWPF8x5cdJb8ifgg2DUc9d"
+        ),
+        "{keys}"
+    );
+    env.ok(&["--network", "mainnet", "wallet", "remove", "73c5da0a", "--yes"]);
+    assert!(env.ok(&["--network", "mainnet", "wallet", "list"]).contains("No wallets"));
+}

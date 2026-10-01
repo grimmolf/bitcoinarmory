@@ -17,7 +17,7 @@ pub struct NodeArgs {
     #[arg(long, global = true, env = "ARMORY_RPC_ADDR")]
     pub rpc_addr: Option<String>,
     /// Core's `.cookie` file (default: in the Bitcoin data directory).
-    #[arg(long, global = true)]
+    #[arg(long, global = true, env = "ARMORY_RPC_COOKIE")]
     pub rpc_cookie: Option<PathBuf>,
     /// RPC user (only with `rpcauth`; cookie authentication is preferred).
     #[arg(long, global = true, env = "ARMORY_RPC_USER")]
@@ -25,7 +25,7 @@ pub struct NodeArgs {
     #[arg(long, global = true, env = "ARMORY_RPC_PASSWORD", hide_env_values = true)]
     pub rpc_password: Option<String>,
     /// Bitcoin Core data directory (default ~/.bitcoin or ~/Library/Application Support/Bitcoin).
-    #[arg(long, global = true)]
+    #[arg(long, global = true, env = "ARMORY_BITCOIN_DATADIR")]
     pub bitcoin_datadir: Option<PathBuf>,
 }
 

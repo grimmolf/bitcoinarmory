@@ -4,9 +4,11 @@ mod app;
 mod cli_backup;
 mod cli_lockbox;
 mod cli_message;
+mod cli_misc;
 mod cli_modern;
 mod cli_node;
 mod cli_tx;
+mod config;
 mod context;
 
 use std::path::PathBuf;
@@ -14,13 +16,19 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use serde::Serialize;
 
 use context::{Context, Network};
 
 #[derive(Parser)]
-#[command(name = "armory", version, about = "Armory Bitcoin wallet (CLI)", propagate_version = true)]
+#[command(
+    name = "armory",
+    version,
+    about = "Armory Bitcoin wallet: cold storage, paper backups, multisig lockboxes",
+    long_about = "Armory Bitcoin wallet.\n\nRun `armory tui` for the terminal interface. Settings in armory.toml (see `armory config path`) provide defaults for the global options.",
+    propagate_version = true
+)]
 struct Cli {
     /// Bitcoin network.
     #[arg(long, global = true, value_enum, default_value_t = Network::Mainnet, env = "ARMORY_NETWORK")]
@@ -76,6 +84,32 @@ enum Command {
     /// Multisig lockboxes (SegWit, and imported Armory 0.93 lockboxes).
     #[command(subcommand)]
     Lockbox(cli_lockbox::LockboxCmd),
+    /// Address book of people you pay.
+    #[command(subcommand)]
+    Addressbook(cli_misc::BookCmd),
+    /// `bitcoin:` payment request links.
+    #[command(subcommand)]
+    Uri(cli_misc::UriCmd),
+    /// Move all coins of a private key you hold into a wallet.
+    Sweep {
+        id: String,
+        #[command(flatten)]
+        fee: cli_tx::FeeArgs,
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Key and transaction tools.
+    #[command(subcommand)]
+    Tools(cli_misc::ToolsCmd),
+    /// Settings file (defaults for global options).
+    #[command(subcommand)]
+    Config(ConfigCmd),
+    /// Print shell completions (bash, zsh, fish, elvish, powershell).
+    Completions { shell: clap_complete::Shell },
+    /// Print the manual page (roff).
+    Manpage,
+    /// About Armory: version, licence, credits.
+    About,
     /// Sign and verify messages (BIP137, BIP322, Armory signed blocks).
     #[command(subcommand)]
     Message(cli_message::MessageCmd),
@@ -204,7 +238,85 @@ pub(crate) fn print<T: Serialize>(json: bool, value: &T, text: impl FnOnce(&T) -
     }
 }
 
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Show the settings.
+    List,
+    /// Set a setting.
+    Set { key: String, value: String },
+    /// Remove a setting.
+    Unset { key: String },
+    /// Print the settings file location.
+    Path,
+}
+
+fn config_cmd(datadir: Option<&std::path::Path>, json: bool, cmd: ConfigCmd) -> Result<()> {
+    let path =
+        config::path(datadir).ok_or_else(|| anyhow::anyhow!("cannot determine the config directory"))?;
+    let mut values = config::load(&path)?;
+    match cmd {
+        ConfigCmd::List => print(json, &values, |v| {
+            let mut out: Vec<String> = config::KEYS
+                .iter()
+                .map(|(k, _, help)| {
+                    format!("{k:<16} = {:<40} # {help}", v.get(*k).map(String::as_str).unwrap_or(""))
+                })
+                .collect();
+            out.insert(0, format!("# {}", path.display()));
+            out.join("\n")
+        }),
+        ConfigCmd::Set { key, value } => {
+            config::check_key(&key)?;
+            values.insert(key, value);
+            config::save(&path, &values)?;
+            print(json, &values, |_| "Saved.".into());
+        }
+        ConfigCmd::Unset { key } => {
+            config::check_key(&key)?;
+            values.remove(&key);
+            config::save(&path, &values)?;
+            print(json, &values, |_| "Saved.".into());
+        }
+        ConfigCmd::Path => print(json, &path, |p| p.display().to_string()),
+    }
+    Ok(())
+}
+
+/// Write to stdout, treating a closed pipe (`| head`) as success.
+fn write_stdout(b: &[u8]) -> Result<()> {
+    use std::io::Write;
+    match std::io::stdout().write_all(b) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        r => Ok(r?),
+    }
+}
+
 fn run(cli: Cli) -> Result<()> {
+    match &cli.command {
+        Command::Config(_) | Command::Completions { .. } | Command::Manpage | Command::About => {
+            return match cli.command {
+                Command::Config(cmd) => config_cmd(cli.datadir.as_deref(), cli.json, cmd),
+                Command::Completions { shell } => {
+                    let mut buf = Vec::new();
+                    clap_complete::generate(shell, &mut Cli::command(), "armory", &mut buf);
+                    write_stdout(&buf)
+                }
+                Command::Manpage => {
+                    let mut buf = Vec::new();
+                    clap_mangen::Man::new(Cli::command()).render(&mut buf)?;
+                    write_stdout(&buf)
+                }
+                _ => {
+                    println!(
+                        "Armory {} (Rust)\nCopyright (C) 2011-2015 Armory Technologies, Inc.; Rust rebuild by the Armory contributors.\nLicensed under the GNU Affero General Public License v3 or later; see LICENSE.\nNo warranty. This program never contacts any server other than your own Bitcoin Core node.",
+                        env!("CARGO_PKG_VERSION")
+                    );
+                    Ok(())
+                }
+            };
+        }
+        _ => {}
+    }
     let ctx = Context::new(cli.network, cli.datadir, cli.passphrase_file)?;
     let json = cli.json;
     match cli.command {
@@ -221,6 +333,13 @@ fn run(cli: Cli) -> Result<()> {
         Command::Node(cmd) => cli_node::node(&ctx, &cli.node, json, cmd),
         Command::Address(cmd) => cli_modern::address(&ctx, json, cmd),
         Command::Lockbox(cmd) => cli_lockbox::lockbox(&ctx, &cli.node, json, cmd),
+        Command::Config(_) | Command::Completions { .. } | Command::Manpage | Command::About => {
+            unreachable!()
+        }
+        Command::Addressbook(cmd) => cli_misc::addressbook(&ctx, json, cmd),
+        Command::Uri(cmd) => cli_misc::uri(&ctx, json, cmd),
+        Command::Sweep { id, fee, yes } => cli_misc::sweep_key(&ctx, &cli.node, json, &id, &fee, yes),
+        Command::Tools(cmd) => cli_misc::tools(&ctx, json, cmd),
         Command::Message(cmd) => cli_message::message(&ctx, json, cmd),
         Command::Backup(cmd) => cli_backup::backup(&ctx, json, cmd),
         Command::Restore(cmd) => cli_backup::restore(&ctx, json, cmd),
@@ -403,8 +522,29 @@ fn address(ctx: &Context, json: bool, cmd: LegacyAddressCmd) -> Result<()> {
 }
 
 /// Exit codes: 0 ok, 1 error, 2 usage (clap), 3 wrong passphrase, 4 backup test failed.
+/// Parse the command line with armory.toml values as defaults (CLI > env > file > built-in).
+fn parse_cli() -> Cli {
+    let args: Vec<String> = std::env::args().collect();
+    let mut cmd = Cli::command();
+    if let Some(path) = config::path(config::early_datadir(&args).as_deref()) {
+        match config::load(&path) {
+            Ok(values) => {
+                for (key, arg_id, _) in config::KEYS {
+                    if let Some(v) = values.get(*key) {
+                        let v: &'static str = Box::leak(v.clone().into_boxed_str());
+                        cmd = cmd.mut_arg(*arg_id, |a| a.default_value(v));
+                    }
+                }
+            }
+            Err(e) => eprintln!("warning: ignoring {}: {e:#}", path.display()),
+        }
+    }
+    let matches = cmd.get_matches();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
