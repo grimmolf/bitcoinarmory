@@ -30,7 +30,7 @@ Optional, needs local tools:
 
 - **Real Bitcoin Core end-to-end** (what CI's `regtest` job runs; download Core 29+ from bitcoincore.org):
   ```sh
-  export ARMORY_BITCOIND=/path/to/bitcoin-29.1/bin/bitcoind
+  export ARMORY_BITCOIND=/path/to/bitcoin-31.1/bin/bitcoind
   cargo test -p armory --test regtest --release -- --nocapture                # CLI flows
   cargo test -p armory --bin armory --release regtest -- --nocapture          # TUI payment flow
   ```

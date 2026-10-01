@@ -103,7 +103,7 @@ the wallet files and Bitcoin Core directly.
 | M1 legacy v1.35 wallets (`armory legacy …`) | done |
 | M1b modern wallets: BIP39/BIP84/BIP86, encryption, migration, descriptors | done |
 | M2 paper / SecurePrint / fragmented backups (create, restore, `--test`; Armory 0.93 sheets and fragments restore) | done |
-| M3 Bitcoin Core backend (`node status`, `wallet sync`, `balance`, `history --csv`, `utxos`) | done; end-to-end against `bitcoind -regtest` 29.1 in CI |
+| M3 Bitcoin Core backend (`node status`, `wallet sync`, `balance`, `history --csv`, `utxos`) | done; end-to-end against `bitcoind -regtest` 31.1 in CI |
 | M4 spending: `send` (incl. `--max`, BIP21, RBF bump, abandon), offline PSBT, Armory 0.93 offline transactions (USTX), `wallet sweep-legacy`, `sweep` (private keys) | done; regtest end-to-end in CI |
 | M5 lockboxes (SegWit multisig, Armory 0.93 lockbox import), messages (BIP322, BIP137, Armory signed blocks), address book | done |
 | M6 TUI | done: every command reachable (table above); tests render every screen and drive dialogs, incl. a payment against regtest Core |

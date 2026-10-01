@@ -62,7 +62,7 @@ jobs:
     # online paths against Core itself.
     runs-on: ubuntu-latest
     env:
-      CORE_VERSION: "29.1"
+      CORE_VERSION: "31.1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

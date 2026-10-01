@@ -371,7 +371,7 @@ tree is AGPL-3.0 (ATI, 2011–2015), so the Rust rebuild, as a derivative work, 
 ## 7. Delivery status (v0.1)
 
 Delivered rows are covered by CLI integration tests (`crates/armory/tests/cli.rs`), the end-to-end test against
-`bitcoind -regtest` 29.1 (`tests/regtest.rs`, run in CI) and the TUI tests (every screen rendered, every advertised
+`bitcoind -regtest` 31.1 (`tests/regtest.rs`, run in CI) and the TUI tests (every screen rendered, every advertised
 key exercised, a payment through the dialogs against regtest Core). Every delivered command is reachable from the TUI.
 
 | Area | Delivered | Deferred (reason) |
