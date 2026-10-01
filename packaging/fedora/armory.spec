@@ -5,6 +5,8 @@
 #             or vendor them first (`cargo vendor`) and add the tarball as Source1.
 
 %global commit_ref v%{version}
+# Release builds carry no debug symbols; there is nothing for a -debuginfo package.
+%global debug_package %{nil}
 
 Name:           armory
 Version:        0.1.0

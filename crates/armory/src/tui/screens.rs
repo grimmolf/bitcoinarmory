@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow, bail};
 use armory_node::core::Core;
-use armory_wallet::modern::{AccountKind, ModernWallet};
+use armory_wallet::modern::{AccountKind, ModernError, ModernWallet};
 use armory_wallet::sign;
 use bitcoin::psbt::Psbt;
 use ratatui::Frame;
@@ -152,8 +152,8 @@ fn hl() -> Style {
 
 fn move_sel(sel: &mut usize, len: usize, k: &KeyEvent) -> bool {
     match k.code {
-        KeyCode::Down | KeyCode::Char('j') => *sel = (*sel + 1).min(len.saturating_sub(1)),
-        KeyCode::Up | KeyCode::Char('k') => *sel = sel.saturating_sub(1),
+        KeyCode::Down => *sel = (*sel + 1).min(len.saturating_sub(1)),
+        KeyCode::Up => *sel = sel.saturating_sub(1),
         KeyCode::PageDown => *sel = (*sel + 15).min(len.saturating_sub(1)),
         KeyCode::PageUp => *sel = sel.saturating_sub(15),
         KeyCode::Home => *sel = 0,
@@ -899,24 +899,32 @@ fn prepare(
 pub fn prepared(app: &mut App, p: Prepared) {
     let summary = summary_text(&p.summary);
     app.screens.last_send = Some(summary.clone());
-    let w = p.wallet.clone();
     app.confirm(
         "Review the transaction",
         format!("{summary}\n\nSign and broadcast this transaction?"),
-        move |app| {
-            app.with_passphrase(&w, move |app, pass| {
-                app.spawn("Signing and broadcasting", move |ctx, node| {
-                    let core = Core::new(&node.config(), ctx.network.bitcoin());
-                    let txid = ops::execute(ctx, &core, p, pass.as_ref().map(|x| x.as_bytes()))?;
-                    Ok(Reply::Output {
-                        title: "Sent".into(),
-                        text: Zeroizing::new(format!("Broadcast {txid}")),
-                        show: true,
-                    })
-                });
-            });
-        },
+        move |app| sign_and_send(app, p),
     );
+}
+
+/// Ask the passphrase, sign and broadcast; a wrong passphrase asks again.
+pub fn sign_and_send(app: &mut App, p: Prepared) {
+    let w = p.wallet.clone();
+    app.with_passphrase(&w, move |app, pass| {
+        app.spawn("Signing and broadcasting", move |ctx, node| {
+            let u = match p.wallet.unlock(pass.as_ref().map(|x| x.as_bytes())) {
+                Ok(u) => u,
+                Err(ModernError::WrongPassphrase) => return Ok(Reply::Retry(Box::new(p))),
+                Err(e) => return Err(e.into()),
+            };
+            let core = Core::new(&node.config(), ctx.network.bitcoin());
+            let txid = ops::execute_unlocked(ctx, &core, p, &u)?;
+            Ok(Reply::Output {
+                title: "Sent".into(),
+                text: Zeroizing::new(format!("Broadcast {txid}")),
+                show: true,
+            })
+        });
+    });
 }
 
 // ====================================================================== receive
@@ -1184,7 +1192,9 @@ fn send_key(app: &mut App, k: KeyEvent) -> Result<()> {
             ));
         }
         KeyCode::Char('d') => {
-            if let Some(e) = app.screens.book.get(app.screens.book_sel).cloned() {
+            let e = app.screens.book.get(app.screens.book_sel).cloned();
+            let e = e.ok_or_else(|| anyhow!("the address book is empty"))?;
+            {
                 app.confirm(
                     "Delete contact",
                     format!("Remove {} ({}) from the address book?", e.label, e.address),

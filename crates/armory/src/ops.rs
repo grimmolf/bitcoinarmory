@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 use anyhow::{Result, anyhow, bail};
 use armory_node::core::{Core, DEFAULT_GAP, FundRequest, Rescan};
-use armory_wallet::modern::{AccountKind, ModernWallet};
+use armory_wallet::modern::{AccountKind, ModernWallet, Unlocked};
 use armory_wallet::sign::{self, Expected, PsbtSummary};
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::hashes::Hash;
@@ -306,10 +306,14 @@ pub(crate) fn prepare_bump(
 
 /// Sign, finalize and broadcast a prepared transaction; returns the txid.
 pub(crate) fn execute(ctx: &Context, core: &Core, p: Prepared, passphrase: Option<&[u8]>) -> Result<String> {
+    let u = p.wallet.unlock(passphrase)?;
+    execute_unlocked(ctx, core, p, &u)
+}
+
+/// [`execute`] with an already unlocked wallet.
+pub(crate) fn execute_unlocked(ctx: &Context, core: &Core, p: Prepared, u: &Unlocked) -> Result<String> {
     let Prepared { path, mut wallet, mut psbt, comment, recipients, .. } = p;
-    let u = wallet.unlock(passphrase)?;
-    wallet.sign_psbt(&u, &mut psbt, DEFAULT_GAP)?;
-    drop(u);
+    wallet.sign_psbt(u, &mut psbt, DEFAULT_GAP)?;
     sign::finalize(&mut psbt)?;
     let tx = psbt.extract_tx().map_err(|e| anyhow!("cannot extract transaction: {e}"))?;
     let txid = core.broadcast(&serialize_hex(&tx))?;

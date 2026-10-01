@@ -31,6 +31,8 @@ pub enum Reply {
     Node(std::result::Result<NodeStatus, String>),
     Data(String, WalletData),
     Prepared(Box<Prepared>),
+    /// Wrong passphrase for a prepared transaction: ask again.
+    Retry(Box<Prepared>),
     Offline(Box<super::screens::OfflineTx>),
     Status(String),
 }
@@ -65,6 +67,8 @@ pub struct App {
     pub modals: Vec<Modal>,
     pub status: (String, bool),
     pub busy: Vec<String>,
+    /// Jobs not yet finished, quiet ones included.
+    pub inflight: usize,
     pub tick: usize,
     pub quit: bool,
     pub screens: super::screens::State,
@@ -90,6 +94,7 @@ impl App {
             modals: Vec::new(),
             status: (String::new(), false),
             busy: Vec::new(),
+            inflight: 0,
             tick: 0,
             quit: false,
             screens: Default::default(),
@@ -184,6 +189,7 @@ impl App {
         if !quiet {
             self.busy.push(label.to_string());
         }
+        self.inflight += 1;
         let (ctx, node, tx) = (self.ctx.clone(), self.node.clone(), self.tx.clone());
         let label = if quiet { String::new() } else { label.to_string() };
         std::thread::spawn(move || {
@@ -274,8 +280,15 @@ impl App {
         w: &ModernWallet,
         then: impl FnOnce(&mut App, Option<Zeroizing<String>>) + 'static,
     ) {
-        if !w.is_encrypted() || self.passphrase_file.is_some() {
+        if !w.is_encrypted() {
             then(self, None);
+            return;
+        }
+        if self.passphrase_file.is_some() {
+            match self.ctx.passphrase("") {
+                Ok(p) => then(self, Some(p)),
+                Err(e) => self.show_error(format!("{e:#}")),
+            }
             return;
         }
         let mut then = Some(then);
@@ -339,6 +352,7 @@ impl App {
     /// Collect finished jobs and refresh periodically.
     pub fn poll(&mut self) {
         while let Ok(d) = self.rx.try_recv() {
+            self.inflight = self.inflight.saturating_sub(1);
             if !d.label.is_empty() {
                 if let Some(i) = self.busy.iter().position(|b| *b == d.label) {
                     self.busy.remove(i);
@@ -361,6 +375,10 @@ impl App {
                     }
                 }
                 Ok(Reply::Prepared(p)) => super::screens::prepared(self, *p),
+                Ok(Reply::Retry(p)) => {
+                    self.set_error("Wrong passphrase; try again (Esc cancels).");
+                    super::screens::sign_and_send(self, *p);
+                }
                 Ok(Reply::Offline(o)) => {
                     self.screens.offline = Some(*o);
                     self.tab = Tab::Offline;
@@ -373,7 +391,7 @@ impl App {
                 self.refresh();
             }
         }
-        if self.last_refresh.elapsed() > Duration::from_secs(30) && self.busy.is_empty() {
+        if self.last_refresh.elapsed() > Duration::from_secs(30) && self.inflight == 0 {
             self.refresh();
         }
         self.tick = self.tick.wrapping_add(1);

@@ -32,7 +32,7 @@ fn wait(app: &mut App) {
     let start = Instant::now();
     loop {
         app.poll();
-        if app.busy.is_empty() && app.node_status.is_some() {
+        if app.inflight == 0 {
             break;
         }
         assert!(start.elapsed() < Duration::from_secs(60), "job did not finish");
@@ -79,6 +79,7 @@ fn setup() -> (tempfile::TempDir, App) {
             "Savings",
             "--words",
             "12",
+            "--taproot",
             "--kdf-memory-mib",
             "1",
             "--kdf-iterations",
@@ -195,6 +196,44 @@ fn dialogs_run_the_cli_commands() {
     submit(&mut app);
     wait(&mut app);
     assert!(matches!(app.modals.last(), Some(Modal::View(v)) if v.error), "{}", top_view(&app));
+}
+
+/// Every key the help and footer advertise does something on its screen.
+#[test]
+fn every_advertised_key_does_something() {
+    let (_d, mut app) = setup();
+    wait(&mut app);
+    // An address to act on.
+    key(&mut app, KeyCode::Char('3'));
+    key(&mut app, KeyCode::Char('n'));
+    wait(&mut app);
+    let screens: [(char, &str); 10] = [
+        ('1', "s\n"),
+        ('2', "cRmsepAdDkSXExL"),
+        ('3', "na\nlu"),
+        ('4', "nu\nbd"),
+        ('5', "v\ncfxe"),
+        ('6', "opsbcmv"),
+        ('7', "nkiesabup"),
+        ('8', "pftTRF"),
+        ('9', "svbkidul"),
+        ('0', "ncta"),
+    ];
+    for (tab, keys) in screens {
+        for k in keys.chars() {
+            key(&mut app, KeyCode::Char(tab));
+            let snap = |a: &App| {
+                (a.modals.len(), a.inflight, a.status.clone(), a.tab, a.screens.coins, a.screens.account)
+            };
+            let before = snap(&app);
+            key(&mut app, if k == '\n' { KeyCode::Enter } else { KeyCode::Char(k) });
+            assert_ne!(snap(&app), before, "screen {tab}: key {k:?} did nothing");
+            app.modals.clear();
+            wait(&mut app);
+            app.modals.clear();
+            app.screens.coins = false;
+        }
+    }
 }
 
 #[test]
