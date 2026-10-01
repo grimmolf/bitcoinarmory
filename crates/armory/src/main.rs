@@ -4,6 +4,7 @@ mod app;
 mod cli_backup;
 mod cli_modern;
 mod cli_node;
+mod cli_tx;
 mod context;
 
 use std::path::PathBuf;
@@ -45,6 +46,11 @@ enum Command {
     /// Receive addresses and labels.
     #[command(subcommand)]
     Address(cli_modern::AddressCmd),
+    /// Send bitcoin (Core selects coins; Armory signs and broadcasts, or writes a PSBT).
+    Send(cli_tx::SendArgs),
+    /// Partially signed transactions (PSBT): show, sign offline, broadcast.
+    #[command(subcommand)]
+    Tx(cli_tx::TxCmd),
     /// Balance of a wallet (from Bitcoin Core; run `wallet sync` first).
     Balance { id: String },
     /// Transaction history (newest first).
@@ -195,7 +201,12 @@ fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
     match cli.command {
         Command::Wallet(cli_modern::WalletCmd::Sync(a)) => cli_node::sync(&ctx, &cli.node, json, a),
+        Command::Wallet(cli_modern::WalletCmd::SweepLegacy(a)) => {
+            cli_tx::sweep_legacy(&ctx, &cli.node, json, a)
+        }
         Command::Wallet(cmd) => cli_modern::wallet(&ctx, json, cmd),
+        Command::Send(a) => cli_tx::send(&ctx, &cli.node, json, a),
+        Command::Tx(cmd) => cli_tx::tx(&ctx, &cli.node, json, cmd),
         Command::Balance { id } => cli_node::balance(&ctx, &cli.node, json, &id),
         Command::History { id, limit, csv } => cli_node::history(&ctx, &cli.node, json, &id, limit, csv),
         Command::Utxos { id, min_conf } => cli_node::utxos(&ctx, &cli.node, json, &id, min_conf),

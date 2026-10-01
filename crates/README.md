@@ -48,6 +48,11 @@ armory node status
 armory wallet sync <ID>        # imports descriptors; rescans from the wallet birthday
 armory balance <ID>
 armory history <ID> --csv history.csv
+armory send <ID> --to bc1q...=0.01 --target 6
+armory send <ID> --to bc1q...=0.01 --unsigned-out tx.psbt   # sign offline:
+armory tx sign tx.psbt --wallet <ID>                         # (offline machine)
+armory tx broadcast tx.psbt                                  # (online machine)
+armory wallet sweep-legacy <ID>                              # Armory 0.93 funds -> SegWit
 ```
 
 ## Status
@@ -59,7 +64,7 @@ armory history <ID> --csv history.csv
 | M1b modern wallets: BIP39/BIP84/BIP86, encryption, migration, descriptors | done |
 | M2 paper / SecurePrint / fragmented backups (create, restore, `--test`; Armory 0.93 sheets and fragments restore) | done |
 | M3 Bitcoin Core backend (`node status`, `wallet sync`, `balance`, `history --csv`, `utxos`) | done against a mock Core RPC server; not yet run against a real regtest node |
-| M4 spending (PSBT / USTX) | not started |
+| M4 spending: `send` (incl. `--max`, RBF), `tx show/sign/broadcast` (offline PSBT), `wallet sweep-legacy` | done; signing verified locally for P2WPKH, P2TR and legacy P2PKH; Core funding tested against the mock only. Legacy USTX import/export not yet |
 | M5 lockboxes, messages | not started |
 | M6 TUI | not started |
 | M7 goatpig `.lmdb` import | not started |

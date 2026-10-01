@@ -49,6 +49,7 @@ fn handler(path: &str, method: &str, params: &Value) -> Result<Value, (i64, &'st
             }
         }
         "sendrawtransaction" => json!("c0ffee"),
+        "walletcreatefundedpsbt" => json!({"psbt": "cHNidP8=", "fee": 0.0001, "changepos": 1}),
         _ => return Err((-32601, "Method not found")),
     })
 }
@@ -198,4 +199,27 @@ fn balances_history_utxos_fees_broadcast() {
     assert_eq!(c.broadcast("00").unwrap(), "c0ffee");
     let e = c.broadcast("bad").unwrap_err().to_string();
     assert!(e.contains("min relay fee not met"), "{e}");
+}
+
+#[test]
+fn fund_psbt_request_shape() {
+    let m = start();
+    let c = core(&m, Network::Regtest);
+    let req = armory_node::core::FundRequest {
+        wallet_id: "abcd".into(),
+        outputs: vec![("bcrt1qdest".into(), 123_456_789)],
+        inputs: vec![],
+        change_address: "bcrt1qchange".into(),
+        fee_rate: 7.5,
+        subtract_fee: false,
+    };
+    assert_eq!(c.fund_psbt(&req).unwrap(), "cHNidP8=");
+    let calls = m.calls.lock().unwrap();
+    let f = calls.iter().find(|c| c.1 == "walletcreatefundedpsbt").unwrap();
+    assert_eq!(f.0, "/wallet/armory-abcd");
+    assert_eq!(f.2[1], json!([{"bcrt1qdest": "1.23456789"}]));
+    assert_eq!(f.2[3]["changeAddress"], "bcrt1qchange");
+    assert_eq!(f.2[3]["fee_rate"], 7.5);
+    assert_eq!(f.2[3]["replaceable"], true);
+    assert_eq!(f.2[3]["add_inputs"], true);
 }

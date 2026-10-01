@@ -156,6 +156,22 @@ pub struct ImportReport {
     pub rescan_from: u64,
 }
 
+/// Parameters for [`Core::fund_psbt`].
+#[derive(Debug, Clone)]
+pub struct FundRequest {
+    pub wallet_id: String,
+    pub outputs: Vec<(String, u64)>,
+    pub inputs: Vec<(String, u32)>,
+    pub change_address: String,
+    pub fee_rate: f64,
+    pub subtract_fee: bool,
+}
+
+/// Satoshis as a BTC decimal string (exact, unlike a float).
+pub fn format_btc(sats: u64) -> String {
+    format!("{}.{:08}", sats / 100_000_000, sats % 100_000_000)
+}
+
 /// Rescan start for an import.
 #[derive(Debug, Clone, Copy)]
 pub enum Rescan {
@@ -340,6 +356,37 @@ impl Core {
         let floor = ni["relayfee"].as_f64().unwrap_or(0.00001) * 1e5; // BTC/kvB -> sat/vB
         let est = e["feerate"].as_f64().map(|r| r * 1e5);
         Ok(est.unwrap_or(floor).max(floor))
+    }
+
+    /// Let Core choose coins and build a PSBT (`walletcreatefundedpsbt` on the watch-only wallet).
+    ///
+    /// * `outputs`: address -> satoshis;
+    /// * `inputs`: spend exactly these outpoints (no others are added) when given;
+    /// * `subtract_fee`: take the fee out of the first output (send-max and sweeps);
+    /// * `fee_rate`: sat/vB. RBF is always signalled.
+    pub fn fund_psbt(&self, req: &FundRequest) -> Result<String> {
+        let outputs: Vec<Value> =
+            req.outputs.iter().map(|(a, s)| json!({ a.clone(): format_btc(*s) })).collect();
+        let inputs: Vec<Value> = req.inputs.iter().map(|(t, v)| json!({"txid": t, "vout": v})).collect();
+        let mut options = json!({
+            "changeAddress": req.change_address,
+            "fee_rate": req.fee_rate,
+            "replaceable": true,
+            "includeWatching": true,
+            "add_inputs": req.inputs.is_empty(),
+        });
+        if req.subtract_fee {
+            options["subtractFeeFromOutputs"] = json!([0]);
+        }
+        let r = self.rpc.call(
+            Some(&Self::wallet_name(&req.wallet_id)),
+            "walletcreatefundedpsbt",
+            json!([inputs, outputs, 0, options, true]),
+        )?;
+        r["psbt"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| NodeError::Unexpected("walletcreatefundedpsbt".into()))
     }
 
     /// `testmempoolaccept` then `sendrawtransaction`; Core's reject reason is returned verbatim.

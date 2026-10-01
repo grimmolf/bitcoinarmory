@@ -465,3 +465,56 @@ fn node_errors_are_clear() {
     );
     assert!(String::from_utf8_lossy(&o.stderr).contains("cannot connect to Bitcoin Core"));
 }
+
+#[test]
+fn offline_psbt_show_and_sign() {
+    use bitcoin::{Amount, OutPoint, Transaction, TxIn, TxOut, absolute, transaction};
+    use std::str::FromStr;
+
+    let env = Env::new();
+    let o = env
+        .run(&["--network", "regtest", "wallet", "restore", "--no-encrypt"], Some(&format!("{ABANDON}\n")));
+    assert!(o.status.success());
+    let w =
+        armory_wallet::modern::ModernWallet::restore(bitcoin::Network::Regtest, "t", ABANDON, "", None, 0)
+            .unwrap()
+            .wallet;
+    let mine = w.address(0, 0, 0).unwrap();
+    let funding = Transaction {
+        version: transaction::Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn::default()],
+        output: vec![TxOut { value: Amount::from_sat(50_000), script_pubkey: mine.script_pubkey() }],
+    };
+    let spend = Transaction {
+        version: transaction::Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(funding.compute_txid(), 0),
+            sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+            ..Default::default()
+        }],
+        output: vec![TxOut {
+            value: Amount::from_sat(49_000),
+            script_pubkey: w.address(0, 1, 0).unwrap().script_pubkey(),
+        }],
+    };
+    let mut psbt = bitcoin::psbt::Psbt::from_unsigned_tx(spend).unwrap();
+    psbt.inputs[0].witness_utxo = Some(funding.output[0].clone());
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let path = bitcoin::bip32::DerivationPath::from_str("m/84'/1'/0'/0/0").unwrap();
+    let u = w.unlock(None).unwrap();
+    let pk = u.master().derive_priv(&secp, &path).unwrap().private_key.public_key(&secp);
+    psbt.inputs[0].bip32_derivation.insert(pk, (w.master_fingerprint().unwrap(), path));
+    let file = env.file("tx.psbt", &format!("{psbt}\n"));
+
+    let shown = env.ok(&["--network", "regtest", "tx", "show", s(&file), "--wallet", "73c5da0a"]);
+    assert!(shown.contains("signed:  0/1") && shown.contains("(change / own)"), "{shown}");
+    env.ok(&["--network", "regtest", "tx", "sign", s(&file), "--wallet", "73c5da0a"]);
+    let signed = bitcoin::psbt::Psbt::from_str(std::fs::read_to_string(&file).unwrap().trim()).unwrap();
+    let mut signed2 = signed.clone();
+    armory_wallet::sign::finalize(&mut signed2).unwrap();
+    let tx = signed2.extract_tx().unwrap();
+    assert_eq!(tx.input[0].witness.len(), 2);
+    assert!(env.ok(&["--network", "regtest", "tx", "show", s(&file)]).contains("signed:  1/1"));
+}

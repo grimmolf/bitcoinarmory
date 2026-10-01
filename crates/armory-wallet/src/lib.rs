@@ -11,6 +11,7 @@ pub mod legacy;
 pub mod modern;
 pub mod network;
 pub mod record;
+pub mod sign;
 pub mod store;
 
 pub use error::{Error, Result};
