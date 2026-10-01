@@ -16,6 +16,7 @@ in place of the PyQt4 GUI.
    - [05 blockchain backend & network](specs/05-blockchain-backend-and-network.md)
    - [06 feature inventory (394 rows)](specs/06-feature-inventory.md)
    - [07 upstream open issues (163)](specs/07-upstream-open-issues.md)
+   - [08 goatpig "0.97" LMDB wallet format (research)](specs/08-goatpig-lmdb-format.md)
 
 Supporting assets: `fixtures/legacy/` (golden files) and `tools/legacy-oracle/` (reference vectors from the original
 C++ crypto).
