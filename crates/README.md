@@ -69,22 +69,23 @@ the wallet files and Bitcoin Core directly.
 | Command | TUI |
 |---|---|
 | `wallet list` / `show` | Overview (1), Wallets (2) |
-| `wallet create` / `restore` / `migrate` | Wallets: `c` / `R` / `m` |
+| `wallet create` / `restore` / `import` / `migrate` | Wallets: `c` / `R` / `I` / `m` |
 | `wallet rename` / `passphrase` / `add-account` | Wallets: `e` / `p` / `A` |
 | `wallet sync` | Wallets or Overview: `s` |
 | `wallet descriptors [--private]` / `check` | Wallets: `d` / `D` / `k` |
 | `wallet show-seed` / `export-keys` / `export-watchonly` / `remove` | Wallets: `S` / `X` / `E` / `x` |
 | `wallet sweep-legacy` | Wallets: `L` |
-| `address new` / `list` / `label` / `qr` | Receive (3): `n` / table / `l` / QR panel and Enter |
+| `address new` / `list` / `label` / `qr` | Receive (3): `n` / table / `l` / QR panel and Enter (`y` copies) |
 | `uri create` | Receive: `u` |
-| `send` (`--to`, `--max`, `--account`, fees, `--comment`, `--unsigned-out`, `--uri`) | Send (4): `n`, `u`, Enter on a contact |
+| `send` (`--to`, `lockbox:ID=BTC`, `--max`, `--account`, fees, `--comment`, `--unsigned-out`, `--uri`) | Send (4): `n`, `u`, Enter on a contact |
+| `send --from-utxo` (coin control) | History → coins: Space marks, `s` pays from the marked coins |
 | `addressbook list` / `add` / `remove` | Send: table / `b` / `d` |
 | `balance` / `history [--csv]` / `utxos` | Overview, History (5): table / `e` / `v` |
 | `tx comment` / `bump-fee` / `abandon` | History: `c` / `f` / `x` |
-| `tx show` / `sign` / `broadcast` / `convert` / `combine` | Offline (6): `o` or `p` / `s` / `b` / `c` / `m` |
+| `tx show` / `sign` / `broadcast [--raw]` / `convert` / `combine` | Offline (6): `o` or `p` / `s` / `b`, `r` / `c` / `m` |
 | `lockbox export-key` / `create` / `import` / `export` | Lockboxes (7): `k` / `n` / `i` / `e` |
 | `lockbox list` / `show` / `address` / `sync` / `balance` / `utxos` / `spend` | Lockboxes: list / details / `a` / `s` / `b` / `u` / `p` |
-| `backup paper` / `fragments` | Backup (8): `p` / `f` |
+| `backup paper` / `fragments` / `file` | Backup (8): `p` / `f` / `d` |
 | `restore paper` / `fragments` (and `--test`) | Backup: `R` / `F` (`t` / `T`) |
 | `message sign` / `verify` (and `--block`) | Tools (9): `s` / `v` / `b` |
 | `sweep` / `tools key-info` / `tools decode-tx` / `uri parse` | Tools: `k` / `i` / `d` / `u` |

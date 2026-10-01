@@ -209,13 +209,13 @@ fn every_advertised_key_does_something() {
     wait(&mut app);
     let screens: [(char, &str); 10] = [
         ('1', "s\n"),
-        ('2', "cRmsepAdDkSXExL"),
-        ('3', "na\nlu"),
+        ('2', "cRImsepAdDkSXExL"),
+        ('3', "na\nlyu"),
         ('4', "nu\nbd"),
         ('5', "v\ncfxe"),
-        ('6', "opsbcmv"),
+        ('6', "oprsbcmv"),
         ('7', "nkiesabup"),
-        ('8', "pftTRF"),
+        ('8', "pdftTRF"),
         ('9', "svbkidul"),
         ('0', "ncta"),
     ];

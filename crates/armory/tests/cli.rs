@@ -792,3 +792,45 @@ fn misc_commands() {
     env.ok(&["--network", "mainnet", "wallet", "remove", "73c5da0a", "--yes"]);
     assert!(env.ok(&["--network", "mainnet", "wallet", "list"]).contains("No wallets"));
 }
+
+#[test]
+fn wallet_import_digital_backup_and_raw_broadcast_checks() {
+    let env = Env::new();
+    let id = create_plain(&env);
+    // Digital backup, then import it into another data directory.
+    let copy = env.dir.path().join("copy.armory");
+    env.ok(&["backup", "file", &id, s(&copy)]);
+    let other = Env::new();
+    let out = other.ok(&["wallet", "import", s(&copy)]);
+    assert!(out.contains(&id), "{out}");
+    assert!(!other.run(&["wallet", "import", s(&copy)], None).status.success(), "duplicate refused");
+    other.ok(&["wallet", "import", s(&copy), "--replace"]);
+    // A watching-only copy imports too; the wrong network is refused.
+    let wo = env.dir.path().join("wo.armory");
+    env.ok(&["wallet", "export-watchonly", &id, s(&wo)]);
+    let third = Env::new();
+    assert!(third.ok(&["wallet", "import", s(&wo)]).contains("watching-only"));
+    let o = third.run(&["--network", "signet", "wallet", "import", s(&wo)], None);
+    assert!(!o.status.success() && String::from_utf8_lossy(&o.stderr).contains("--network"));
+    // KDF settings are shown for encrypted wallets.
+    let enc = env.ok(&[
+        "--passphrase-file",
+        s(&env.file("p", "pw\n")),
+        "wallet",
+        "create",
+        "--label",
+        "E",
+        "--words",
+        "12",
+        "--kdf-memory-mib",
+        "2",
+        "--kdf-iterations",
+        "1",
+        "--json",
+    ]);
+    let enc: serde_json::Value = serde_json::from_str(&enc).unwrap();
+    assert_eq!(enc["kdf"], "Argon2id, 2 MiB, 1 passes");
+    // Raw broadcast checks the hex before contacting a node.
+    let o = env.run(&["tx", "broadcast", "--raw", "00ff"], None);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not a raw transaction"));
+}

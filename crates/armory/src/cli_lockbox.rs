@@ -98,7 +98,7 @@ pub(crate) fn open(ctx: &Context, id: &str) -> Result<(PathBuf, Lockbox)> {
     }
 }
 
-fn save(path: &Path, lb: &Lockbox) -> Result<()> {
+pub(crate) fn save(path: &Path, lb: &Lockbox) -> Result<()> {
     armory_wallet::store::atomic_write(path, &lb.to_json()?)?;
     Ok(())
 }

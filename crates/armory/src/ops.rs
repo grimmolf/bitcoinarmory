@@ -101,8 +101,32 @@ pub(crate) struct SendSpec {
     pub to: Vec<String>,
     pub max: bool,
     pub account: usize,
+    /// Coin control: spend exactly these coins (`TXID:VOUT`).
+    pub inputs: Vec<String>,
     pub fee: FeeArgs,
     pub comment: Option<String>,
+}
+
+/// Replace `lockbox:ID[=BTC]` recipients by the lockbox's next deposit address.
+pub(crate) fn resolve_lockboxes(ctx: &Context, to: &[String]) -> Result<Vec<String>> {
+    to.iter()
+        .map(|t| match t.strip_prefix("lockbox:") {
+            Some(rest) => {
+                let (id, amt) = match rest.split_once('=') {
+                    Some((i, a)) => (i, Some(a)),
+                    None => (rest, None),
+                };
+                let (path, mut lb) = crate::cli_lockbox::open(ctx, id.trim())?;
+                let addr = lb.next_receive()?;
+                crate::cli_lockbox::save(&path, &lb)?;
+                Ok(match amt {
+                    Some(a) => format!("{addr}={a}"),
+                    None => addr.to_string(),
+                })
+            }
+            None => Ok(t.clone()),
+        })
+        .collect()
 }
 
 /// Parse `ADDRESS=BTC` recipients for a network.
@@ -152,10 +176,32 @@ pub(crate) fn prepare_send(ctx: &Context, core: &Core, s: &SendSpec) -> Result<P
         );
     }
     core.status()?;
-    let mut outputs = parse_recipients(&s.to, s.max, w.network)?;
+    let to = resolve_lockboxes(ctx, &s.to)?;
+    let mut outputs = parse_recipients(&to, s.max, w.network)?;
     let recipients = outputs.iter().map(|o| o.0.clone()).collect();
     let mut inputs = Vec::new();
-    if s.max {
+    if !s.inputs.is_empty() {
+        let coins = core.utxos(&w.id, 0)?;
+        let mut total = 0u64;
+        for c in &s.inputs {
+            let (txid, vout) = c
+                .split_once(':')
+                .and_then(|(t, v)| Some((t.to_string(), v.parse::<u32>().ok()?)))
+                .ok_or_else(|| anyhow!("{c}: expected TXID:VOUT"))?;
+            let coin = coins
+                .iter()
+                .find(|u| u.txid == txid && u.vout == vout)
+                .ok_or_else(|| anyhow!("{c} is not an unspent coin of wallet {}", w.id))?;
+            total += coin.amount as u64;
+            inputs.push((txid, vout));
+        }
+        if s.max {
+            if outputs.len() != 1 {
+                bail!("--max needs exactly one recipient");
+            }
+            outputs[0].1 = total;
+        }
+    } else if s.max {
         if outputs.len() != 1 {
             bail!("--max needs exactly one recipient");
         }

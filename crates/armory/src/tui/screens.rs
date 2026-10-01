@@ -89,6 +89,8 @@ pub struct State {
     pub book: Vec<crate::cli_misc::BookEntry>,
     pub offline: Option<OfflineTx>,
     pub last_send: Option<String>,
+    /// Coins marked for coin control (`TXID:VOUT`).
+    pub marked: std::collections::BTreeSet<String>,
 }
 
 /// Keep selections inside their lists.
@@ -244,13 +246,15 @@ pub fn draw(f: &mut Frame, app: &App) {
 fn keys_hint(t: Tab) -> &'static str {
     match t {
         Tab::Overview => "↑↓ select wallet  Enter details  s sync",
-        Tab::Wallets => "c create  R restore  m migrate  s sync  e rename  p passphrase  S seed  …",
-        Tab::Receive => "n new address  a account  Enter QR  l label  u payment request",
+        Tab::Wallets => "c create  R restore  I import  m migrate  s sync  e rename  p passphrase  S seed  …",
+        Tab::Receive => "n new address  a account  Enter QR  y copy  l label  u payment request",
         Tab::Send => "n new payment  u pay a bitcoin: link  Enter pay contact  b add contact  d delete",
-        Tab::History => "v transactions/coins  Enter details  c comment  f bump fee  x abandon  e CSV",
-        Tab::Offline => "o open  p paste  s sign  b broadcast  c convert  m combine  v save as",
+        Tab::History => {
+            "v transactions/coins  Enter details  y copy  c comment  f bump fee  x abandon  e CSV"
+        }
+        Tab::Offline => "o open  p paste  s sign  b broadcast  r raw  c convert  m combine  v save as",
         Tab::Lockboxes => "n create  k my key  i import  e export  s sync  a address  b balance  p spend",
-        Tab::Backup => "p paper  f fragments  t/T test  R/F restore",
+        Tab::Backup => "p paper  f fragments  d file copy  t/T test  R/F restore",
         Tab::Tools => "s sign  v verify  b verify block  k sweep key  i key info  d decode  u URI  l legacy",
         Tab::Settings => "n network  c node connection  t test connection  a about",
     }
@@ -263,25 +267,25 @@ pub fn help(t: Tab) -> String {
             "Overview\n  ↑↓     select wallet\n  Enter  open on the Wallets screen\n  s      let Bitcoin Core watch the selected wallet (sync)"
         }
         Tab::Wallets => {
-            "Wallets\n  ↑↓  select\n  c   create a wallet (new recovery words)\n  R   restore from recovery words\n  m   migrate an Armory 0.93 wallet\n  e   rename\n  p   set / change / remove passphrase\n  A   add a SegWit or Taproot account\n  s   sync with Bitcoin Core (import descriptors, rescan)\n  d   watch-only descriptors     D  private descriptors\n  k   check the wallet\n  S   show recovery words        X  export private keys\n  E   export a watching-only copy\n  L   sweep migrated Armory 0.93 funds into the SegWit account\n  x   remove the wallet"
+            "Wallets\n  ↑↓  select\n  c   create a wallet (new recovery words)\n  R   restore from recovery words\n  I   import a wallet file (e.g. a watching-only copy)\n  m   migrate an Armory 0.93 wallet\n  e   rename\n  p   set / change / remove passphrase\n  A   add a SegWit or Taproot account\n  s   sync with Bitcoin Core (import descriptors, rescan)\n  d   watch-only descriptors     D  private descriptors\n  k   check the wallet\n  S   show recovery words        X  export private keys\n  E   export a watching-only copy\n  L   sweep migrated Armory 0.93 funds into the SegWit account\n  x   remove the wallet"
         }
         Tab::Receive => {
-            "Receive\n  n      new receive address\n  a      next account\n  ↑↓     select an address\n  Enter  show QR code\n  l      label the selected address\n  u      payment request (bitcoin: link with amount) and QR"
+            "Receive\n  n      new receive address\n  a      next account\n  ↑↓     select an address\n  Enter  show QR code\n  y      copy the address to the clipboard\n  l      label the selected address\n  u      payment request (bitcoin: link with amount) and QR"
         }
         Tab::Send => {
             "Send\n  n      new payment (several recipients, send max, fee, unsigned PSBT for offline signing)\n  u      pay a bitcoin: link\n  ↑↓     select a contact;  Enter pays the selected contact\n  b      add or relabel a contact   d  delete it\n\nBitcoin Core selects coins; Armory checks the result against what you asked for,\nshows it, and signs only after you confirm."
         }
         Tab::History => {
-            "History\n  v      switch between transactions and coins (UTXOs)\n  ↑↓     select\n  Enter  details\n  c      comment on a transaction\n  f      raise the fee of an unconfirmed transaction (RBF)\n  x      abandon an unconfirmed transaction\n  e      export the history as CSV"
+            "History\n  v      switch between transactions and coins (UTXOs)\n  Space  (coins) mark a coin;  s  pay from the marked coins (coin control)\n  y      copy the transaction ID\n  ↑↓     select\n  Enter  details\n  c      comment on a transaction\n  f      raise the fee of an unconfirmed transaction (RBF)\n  x      abandon an unconfirmed transaction\n  e      export the history as CSV"
         }
         Tab::Offline => {
-            "Offline transactions (PSBT, and Armory 0.93 TXSIGCOLLECT files)\n  o  open a file          p  paste a transaction and save it\n  s  sign with the selected wallet (works without a node)\n  b  broadcast (finalizes first)\n  c  convert PSBT <-> Armory 0.93 format\n  m  combine signatures from several files (multisig)\n  v  save the loaded transaction as a PSBT file"
+            "Offline transactions (PSBT, and Armory 0.93 TXSIGCOLLECT files)\n  o  open a file          p  paste a transaction and save it\n  s  sign with the selected wallet (works without a node)\n  b  broadcast (finalizes first)      r  broadcast a raw transaction (hex)\n  c  convert PSBT <-> Armory 0.93 format\n  m  combine signatures from several files (multisig)\n  v  save the loaded transaction as a PSBT file"
         }
         Tab::Lockboxes => {
             "Lockboxes (multisig)\n  ↑↓  select\n  k   export the selected wallet's cosigner key\n  n   create an M-of-N lockbox from cosigner keys\n  i   import a lockbox file, multisigs.txt or LOCKBOX block\n  e   export the lockbox file for the cosigners\n  s   sync with Bitcoin Core    a  next deposit address\n  b   balance                   u  coins\n  p   build a spend (PSBT) for the cosigners to sign on the Offline screen"
         }
         Tab::Backup => {
-            "Backup\n  p  paper backup of the selected wallet (optionally SecurePrint)\n  f  fragmented backup (M of N)\n  t  test a paper backup     T  test fragments\n  R  restore from a paper backup (modern or Armory 0.93)\n  F  restore from fragments"
+            "Backup\n  p  paper backup of the selected wallet (optionally SecurePrint)\n  f  fragmented backup (M of N)\n  d  digital backup: a copy of the wallet file\n  t  test a paper backup     T  test fragments\n  R  restore from a paper backup (modern or Armory 0.93)\n  F  restore from fragments"
         }
         Tab::Tools => {
             "Tools\n  s  sign a message          v  verify a signature\n  b  verify an Armory signed-message block\n  k  sweep a private key into the selected wallet\n  i  key information (addresses, WIF) for a private key\n  d  decode a raw transaction\n  u  decode a bitcoin: link\n  l  list Armory 0.93 wallet files (use : for the legacy commands)"
@@ -678,6 +682,23 @@ fn wallets_key(app: &mut App, k: KeyEvent) -> Result<()> {
     }
     match k.code {
         KeyCode::Char('c') => create_form(app),
+        KeyCode::Char('I') => app.push_form(Form::new(
+            "Import a wallet file",
+            vec![
+                text("File")
+                    .with(&format!("{}/", home_dir()))
+                    .help("A .armory file, e.g. a watching-only copy made on the offline computer."),
+                toggle("Replace if present"),
+            ],
+            |app, v| {
+                let mut a = args(&["wallet", "import", &shellexpand(v.str(0))]);
+                if v.flag(1) {
+                    a.push("--replace".into());
+                }
+                app.command("Import", a, Vec::new(), true);
+                Ok(())
+            },
+        )),
         KeyCode::Char('R') => restore_words_form(app),
         KeyCode::Char('m') => migrate_form(app),
         KeyCode::Char('s') => sync_form(app)?,
@@ -832,6 +853,19 @@ fn wallets_key(app: &mut App, k: KeyEvent) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+/// Put text on the terminal's clipboard (OSC 52; supported by most terminals, incl. over SSH).
+fn copy(app: &mut App, text: &str) {
+    use bitcoin::base64::Engine as _;
+    use std::io::Write;
+    let b64 = bitcoin::base64::engine::general_purpose::STANDARD.encode(text);
+    if !cfg!(test) {
+        let mut out = std::io::stdout();
+        let _ = write!(out, "\x1b]52;c;{b64}\x07");
+        let _ = out.flush();
+    }
+    app.set_status(format!("Copied {text} (if the terminal allows clipboard access)"));
 }
 
 fn home_dir() -> String {
@@ -1002,6 +1036,10 @@ fn receive_key(app: &mut App, k: KeyEvent) -> Result<()> {
     let acct = app.screens.account;
     let selected = receive_addresses(app).get(app.screens.addr_sel).map(|x| x.1.clone());
     match k.code {
+        KeyCode::Char('y') => {
+            let ad = selected.ok_or_else(|| anyhow!("no address yet: press n"))?;
+            copy(app, &ad);
+        }
         KeyCode::Char('a') => {
             app.screens.account = (acct + 1) % w.accounts.len().max(1);
             app.screens.addr_sel = 0;
@@ -1097,12 +1135,20 @@ fn draw_send(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(t).block(panel("Send")).wrap(Wrap { trim: false }), bottom);
 }
 
-fn send_form(app: &mut App, to: &str, comment: &str) -> Result<()> {
+fn send_form(app: &mut App, to: &str, comment: &str, coins: Vec<String>) -> Result<()> {
     let w = app.require_wallet()?;
     let accounts = account_choices(&w, false);
     if accounts.is_empty() {
         bail!("this wallet has only legacy accounts: add a SegWit account (Wallets → A) or sweep them (L)");
     }
+    let intro = if coins.is_empty() {
+        "Coins of any account may be used; change goes to the chosen account.\nA recipient can be a lockbox: lockbox:ID=BTC.".to_string()
+    } else {
+        format!(
+            "Coin control: spends exactly the {} marked coin(s); with \"send everything\", all of them.",
+            coins.len()
+        )
+    };
     let unsigned_default =
         if w.is_watching_only() { format!("{}/unsigned.psbt", home_dir()) } else { String::new() };
     app.push_form(
@@ -1126,22 +1172,33 @@ fn send_form(app: &mut App, to: &str, comment: &str) -> Result<()> {
                 let to: Vec<String> =
                     v.str(0).lines().map(|l| l.trim().replace(' ', "")).filter(|l| !l.is_empty()).collect();
                 let max = v.flag(2);
-                ops::parse_recipients(&to, max, w.network)?;
+                let plain: Vec<String> = to.iter().filter(|t| !t.starts_with("lockbox:")).cloned().collect();
+                if !plain.is_empty() {
+                    ops::parse_recipients(&plain, max, w.network)?;
+                }
+                if to.is_empty() {
+                    bail!("no recipient");
+                }
                 let spec = SendSpec {
                     wallet: w.id.clone(),
                     to,
                     max,
                     account: account_index(v.str(1)),
+                    inputs: coins.clone(),
                     fee: fee_args(v, 3, 4)?,
                     comment: v.opt(5),
                 };
+                let coin_control = !spec.inputs.is_empty();
                 prepare(app, "Building transaction", unsigned_path(v, 6), move |ctx, core| {
                     ops::prepare_send(ctx, core, &spec)
                 });
+                if coin_control {
+                    app.screens.marked.clear();
+                }
                 Ok(())
             },
         )
-        .intro("Coins of any account may be used; change goes to the chosen account."),
+        .intro(&intro),
     );
     Ok(())
 }
@@ -1152,12 +1209,12 @@ fn send_key(app: &mut App, k: KeyEvent) -> Result<()> {
         return Ok(());
     }
     match k.code {
-        KeyCode::Char('n') => send_form(app, "", "")?,
+        KeyCode::Char('n') => send_form(app, "", "", Vec::new())?,
         KeyCode::Enter => {
             let e = app.screens.book.get(app.screens.book_sel).cloned();
             match e {
-                Some(e) => send_form(app, &format!("{}=", e.address), &e.label)?,
-                None => send_form(app, "", "")?,
+                Some(e) => send_form(app, &format!("{}=", e.address), &e.label, Vec::new())?,
+                None => send_form(app, "", "", Vec::new())?,
             }
         }
         KeyCode::Char('u') => {
@@ -1168,7 +1225,7 @@ fn send_key(app: &mut App, k: KeyEvent) -> Result<()> {
                     (Some(l), Some(m)) => format!("{l}: {m}"),
                     (l, m) => l.or(m).unwrap_or_default(),
                 };
-                send_form(app, &format!("{}={amount}", p.address), &comment)
+                send_form(app, &format!("{}={amount}", p.address), &comment, Vec::new())
             }))
         }
         KeyCode::Char('b') => {
@@ -1235,14 +1292,16 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
             .into_iter()
             .flatten()
             .map(|u| {
+                let outpoint = format!("{}:{}", u.txid, u.vout);
                 Row::new(vec![
+                    Cell::from(if app.screens.marked.contains(&outpoint) { "●" } else { " " }),
                     Cell::from(btc(u.amount)),
                     Cell::from(u.confirmations.to_string()),
                     Cell::from(u.address.clone().unwrap_or_default()),
                     Cell::from(
                         u.address.as_ref().and_then(|a| w.address_labels.get(a)).cloned().unwrap_or_default(),
                     ),
-                    Cell::from(format!("{}:{}", u.txid, u.vout)),
+                    Cell::from(outpoint),
                 ])
             })
             .collect();
@@ -1252,6 +1311,7 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
             Table::new(
                 rows,
                 [
+                    Constraint::Length(1),
                     Constraint::Length(14),
                     Constraint::Length(7),
                     Constraint::Length(44),
@@ -1259,12 +1319,13 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
                     Constraint::Min(20),
                 ],
             )
-            .header(Row::new(vec!["BTC", "Conf", "Address", "Label", "Outpoint"]).bold())
+            .header(Row::new(vec!["", "BTC", "Conf", "Address", "Label", "Outpoint"]).bold())
             .row_highlight_style(hl())
             .block(panel(&format!(
-                "Coins of {} · {} BTC  (v: transactions)",
+                "Coins of {} · {} BTC  (Space: mark · s: pay from the {} marked · v: transactions)",
                 w.label,
-                btc(total)
+                btc(total),
+                app.screens.marked.len()
             ))),
             area,
             &mut st,
@@ -1333,6 +1394,28 @@ fn history_key(app: &mut App, k: KeyEvent) -> Result<()> {
     }
     let w = app.require_wallet()?;
     if app.screens.coins {
+        let sel = app
+            .wallet_data()
+            .and_then(|d| d.utxos.get(app.screens.coin_sel))
+            .map(|u| format!("{}:{}", u.txid, u.vout));
+        match k.code {
+            KeyCode::Char(' ') => {
+                let c = sel.ok_or_else(|| anyhow!("no coins"))?;
+                if !app.screens.marked.remove(&c) {
+                    app.screens.marked.insert(c);
+                }
+                app.screens.coin_sel = (app.screens.coin_sel + 1).min(nc.saturating_sub(1));
+                return Ok(());
+            }
+            KeyCode::Char('s') => {
+                if app.screens.marked.is_empty() {
+                    bail!("mark coins with Space first");
+                }
+                let coins: Vec<String> = app.screens.marked.iter().cloned().collect();
+                return send_form(app, "", "", coins);
+            }
+            _ => {}
+        }
         if k.code == KeyCode::Enter {
             if let Some(u) = app.wallet_data().and_then(|d| d.utxos.get(app.screens.coin_sel)).cloned() {
                 app.show(
@@ -1353,6 +1436,10 @@ fn history_key(app: &mut App, k: KeyEvent) -> Result<()> {
     }
     let t = app.wallet_data().and_then(|d| d.history.get(app.screens.hist_sel)).cloned();
     match k.code {
+        KeyCode::Char('y') => {
+            let t = t.ok_or_else(|| anyhow!("no transaction selected"))?;
+            copy(app, &t.txid);
+        }
         KeyCode::Enter => {
             let t = t.ok_or_else(|| anyhow!("no transaction selected"))?;
             let addr = t.address.clone().unwrap_or_default();
@@ -1465,6 +1552,28 @@ fn offline_key(app: &mut App, k: KeyEvent) -> Result<()> {
     let loaded = app.screens.offline.as_ref().map(|o| o.path.clone());
     let need = || loaded.clone().ok_or_else(|| anyhow!("open a transaction first (o)"));
     match k.code {
+        KeyCode::Char('r') => app.push_form(Form::new(
+            "Broadcast a raw transaction",
+            vec![multi("Signed transaction (hex)")],
+            |app, v| {
+                let hex: String = v.str(0).split_whitespace().collect();
+                let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize_hex(&hex)
+                    .map_err(|e| anyhow!("not a raw transaction: {e}"))?;
+                app.confirm(
+                    "Broadcast",
+                    format!(
+                        "Broadcast transaction {} ({} inputs, {} outputs)?",
+                        tx.compute_txid(),
+                        tx.input.len(),
+                        tx.output.len()
+                    ),
+                    move |app| {
+                        app.command("Broadcast", args(&["tx", "broadcast", "--raw", &hex]), Vec::new(), true)
+                    },
+                );
+                Ok(())
+            },
+        )),
         KeyCode::Char('o') => app.push_form(Form::new(
             "Open a transaction",
             vec![
@@ -1789,6 +1898,22 @@ const BACKUP_TEXT: &str = "Your recovery words are the backup of a modern wallet
 
 fn backup_key(app: &mut App, k: KeyEvent) -> Result<()> {
     match k.code {
+        KeyCode::Char('d') => {
+            let w = app.require_wallet()?;
+            app.push_form(Form::new(
+                "Digital backup (copy of the wallet file)",
+                vec![text("Save to").with(&home_dir()).help("A directory or file, e.g. on a USB stick.")],
+                move |app, v| {
+                    app.command(
+                        "Digital backup",
+                        args(&["backup", "file", &w.id, &shellexpand(v.str(0))]),
+                        Vec::new(),
+                        false,
+                    );
+                    Ok(())
+                },
+            ));
+        }
         KeyCode::Char('p') => {
             let w = app.require_wallet()?;
             app.push_form(Form::new(

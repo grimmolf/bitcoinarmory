@@ -150,6 +150,35 @@ fn regtest_end_to_end() {
     cli.run(&["tx", "broadcast", psbt.to_str().unwrap()]);
     mine(&node, &miner, 1);
 
+    // Coin control: spend exactly the chosen coin.
+    let utxos = cli.json(&["utxos", &id, "--min-conf", "1"]);
+    let coin = utxos.as_array().unwrap().iter().max_by_key(|u| u["amount"].as_i64()).unwrap().clone();
+    let outpoint = format!("{}:{}", coin["txid"].as_str().unwrap(), coin["vout"]);
+    let cc = cli.json(&[
+        "send",
+        &id,
+        "--to",
+        &format!("{miner}=0.01"),
+        "--from-utxo",
+        &outpoint,
+        "--fee-rate",
+        "2",
+        "--yes",
+    ]);
+    let tx = node.rpc.call(None, "getrawtransaction", json!([cc["txid"], true])).unwrap();
+    let vin = tx["vin"].as_array().unwrap();
+    assert_eq!(vin.len(), 1, "{tx}");
+    assert_eq!(format!("{}:{}", vin[0]["txid"].as_str().unwrap(), vin[0]["vout"]), outpoint);
+    mine(&node, &miner, 1);
+
+    // Paying a lockbox by reference: lockbox:ID=BTC.
+    let lb = cli.json(&["lockbox", "create", "--name", "Solo", "-m", "1", "--with-wallet", &id]);
+    let lb_id = lb["id"].as_str().unwrap().to_string();
+    cli.run(&["lockbox", "sync", &lb_id, "--no-rescan"]);
+    cli.json(&["send", &id, "--to", &format!("lockbox:{lb_id}=0.02"), "--fee-rate", "2", "--yes"]);
+    mine(&node, &miner, 1);
+    assert_eq!(cli.json(&["lockbox", "balance", &lb_id])["confirmed"], json!(2_000_000));
+
     // Migrate an Armory 0.93 wallet, fund a legacy address, sweep it into SegWit.
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/legacy/armory_DZMmtb2v_.wallet");

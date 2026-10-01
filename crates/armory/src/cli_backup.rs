@@ -18,6 +18,12 @@ use crate::print;
 
 #[derive(Subcommand)]
 pub enum BackupCmd {
+    /// Digital backup: a copy of the wallet file (encrypted as it is; labels and comments included).
+    File {
+        id: String,
+        /// Destination file or directory.
+        dest: PathBuf,
+    },
     /// Printable single-sheet backup (recovery words + Easy16 lines, legacy accounts included).
     Paper {
         id: String,
@@ -151,6 +157,23 @@ fn indent(lines: &[String]) -> String {
 
 pub fn backup(ctx: &Context, json: bool, cmd: BackupCmd) -> Result<()> {
     match cmd {
+        BackupCmd::File { id, dest } => {
+            let (src, w) = crate::cli_modern::open(ctx, &id)?;
+            let dest = if dest.is_dir() { dest.join(w.file_name()) } else { dest };
+            if dest.exists() {
+                bail!("{} already exists", dest.display());
+            }
+            armory_wallet::store::atomic_write(&dest, &std::fs::read(&src)?)?;
+            print(json, &dest, |d| {
+                format!(
+                    "Wallet {} copied to {}{}.",
+                    w.id,
+                    d.display(),
+                    if w.is_encrypted() { " (encrypted with its passphrase)" } else { " (NOT encrypted)" }
+                )
+            });
+            return Ok(());
+        }
         BackupCmd::Paper { id, secureprint, output } => {
             let (_, w) = m::open(ctx, &id)?;
             let (u, _) = m::unlock(ctx, &w)?;

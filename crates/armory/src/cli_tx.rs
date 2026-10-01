@@ -32,7 +32,8 @@ pub struct FeeArgs {
 #[derive(Args)]
 pub struct SendArgs {
     id: String,
-    /// Recipient as ADDRESS=BTC (repeatable). With --max: just ADDRESS.
+    /// Recipient as ADDRESS=BTC (repeatable). With --max: just ADDRESS. `lockbox:ID=BTC` pays a
+    /// lockbox's next deposit address.
     #[arg(long = "to", required_unless_present = "uri")]
     to: Vec<String>,
     /// Pay a `bitcoin:` payment request.
@@ -45,6 +46,9 @@ pub struct SendArgs {
     /// use coins of any account of the wallet.
     #[arg(long, default_value_t = 0)]
     account: usize,
+    /// Coin control: spend exactly these coins, TXID:VOUT (repeatable; see `armory utxos`).
+    #[arg(long = "from-utxo")]
+    from_utxo: Vec<String>,
     #[command(flatten)]
     fee: FeeArgs,
     /// Write the unsigned PSBT here (for an offline signer) instead of signing.
@@ -127,8 +131,14 @@ pub enum TxCmd {
         #[arg(long, short)]
         output: PathBuf,
     },
-    /// Finalize a signed PSBT and broadcast it through Bitcoin Core.
-    Broadcast { file: PathBuf },
+    /// Finalize a signed PSBT and broadcast it through Bitcoin Core (or a raw transaction, --raw).
+    Broadcast {
+        #[arg(required_unless_present = "raw")]
+        file: Option<PathBuf>,
+        /// A fully signed raw transaction in hex.
+        #[arg(long, conflicts_with = "file")]
+        raw: Option<String>,
+    },
 }
 
 /// Read a PSBT (binary or base64) or an Armory 0.93 `TXSIGCOLLECT` file (converted to a PSBT).
@@ -244,6 +254,7 @@ pub fn send(ctx: &Context, node: &NodeArgs, json: bool, mut a: SendArgs) -> Resu
         to: a.to,
         max: a.max,
         account: a.account,
+        inputs: a.from_utxo,
         fee: a.fee,
         comment: a.comment,
     };
@@ -338,10 +349,18 @@ Wrote {}.",
                 )
             });
         }
-        TxCmd::Broadcast { file } => {
-            let psbt = read_psbt(&file, ctx.network.bitcoin())?;
+        TxCmd::Broadcast { file, raw } => {
             let core = Core::new(&node.config(), ctx.network.bitcoin());
-            let txid = ops::broadcast_psbt(&core, psbt)?;
+            let txid = match (file, raw) {
+                (_, Some(hex)) => {
+                    let hex: String = hex.split_whitespace().collect();
+                    let _: bitcoin::Transaction = bitcoin::consensus::encode::deserialize_hex(&hex)
+                        .map_err(|e| anyhow!("not a raw transaction: {e}"))?;
+                    core.broadcast(&hex)?
+                }
+                (Some(f), None) => ops::broadcast_psbt(&core, read_psbt(&f, ctx.network.bitcoin())?)?,
+                (None, None) => unreachable!("clap requires one"),
+            };
             print(json, &serde_json::json!({"txid": txid}), |_| format!("Broadcast {txid}"));
         }
     }

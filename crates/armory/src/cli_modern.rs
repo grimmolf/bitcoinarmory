@@ -79,6 +79,13 @@ pub enum WalletCmd {
     },
     /// Write a copy without any secrets.
     ExportWatchonly { id: String, dest: PathBuf },
+    /// Add a wallet file (`.armory`, e.g. a watching-only copy from the offline computer).
+    Import {
+        file: PathBuf,
+        /// Replace a wallet with the same ID.
+        #[arg(long)]
+        replace: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -272,6 +279,8 @@ pub(crate) struct WalletView {
     network: String,
     created: u64,
     protection: &'static str,
+    /// Argon2id cost of the passphrase ("256 MiB, 3 passes").
+    kdf: Option<String>,
     accounts: Vec<AccountView>,
     path: PathBuf,
 }
@@ -289,6 +298,12 @@ pub(crate) fn view(path: &Path, w: &ModernWallet) -> WalletView {
             "encrypted"
         } else {
             "unencrypted"
+        },
+        kdf: match &w.secrets {
+            modern::SecretBox::Encrypted { kdf, .. } => {
+                Some(format!("Argon2id, {} MiB, {} passes", kdf.memory_kib / 1024, kdf.iterations))
+            }
+            _ => None,
         },
         accounts: w
             .accounts
@@ -311,11 +326,12 @@ pub(crate) fn view(path: &Path, w: &ModernWallet) -> WalletView {
 
 pub(crate) fn view_text(v: &WalletView) -> String {
     let mut s = format!(
-        "Wallet ID:   {}\nName:        {}\nNetwork:     {}\nProtection:  {}\nFile:        {}\nAccounts:",
+        "Wallet ID:   {}\nName:        {}\nNetwork:     {}\nProtection:  {}{}\nFile:        {}\nAccounts:",
         v.id,
         v.label,
         v.network,
         v.protection,
+        v.kdf.as_ref().map(|k| format!(" ({k})")).unwrap_or_default(),
         v.path.display()
     );
     for a in &v.accounts {
@@ -580,6 +596,18 @@ pub fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
             let (p, w) = open(ctx, &id)?;
             let (u, _) = unlock(ctx, &w)?;
             show_mnemonic(json, &Created { wallet: view(&p, &w), mnemonic: u.mnemonic()?.to_string() });
+        }
+        WalletCmd::Import { file, replace } => {
+            let w = ModernWallet::load(&file).with_context(|| format!("reading {}", file.display()))?;
+            if w.network != net {
+                bail!("{} is a {} wallet; use --network accordingly", file.display(), w.network);
+            }
+            let dest = ctx.wallet_dir()?.join(w.file_name());
+            if dest.exists() && !replace {
+                bail!("wallet {} is already in Armory (pass --replace to overwrite it)", w.id);
+            }
+            w.save(&dest)?;
+            print(json, &view(&dest, &w), |v| format!("Imported wallet {}.\n{}", v.id, view_text(v)));
         }
         WalletCmd::ExportWatchonly { id, dest } => {
             let (_, w) = open(ctx, &id)?;

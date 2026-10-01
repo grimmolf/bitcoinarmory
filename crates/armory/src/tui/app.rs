@@ -362,6 +362,29 @@ impl App {
             match d.result {
                 Ok(Reply::Node(s)) => self.node_status = Some(s),
                 Ok(Reply::Data(id, data)) => {
+                    // A transaction we had not seen: say so (the old GUI's "surprise tx" popup).
+                    if let Some(old) = self.data.get(&id).filter(|o| o.balances.is_some()) {
+                        let new: Vec<&TxEntry> = data
+                            .history
+                            .iter()
+                            .filter(|t| !old.history.iter().any(|o| o.txid == t.txid))
+                            .collect();
+                        if let Some(t) = new.first() {
+                            let label =
+                                self.wallets.iter().find(|(_, w)| w.id == id).map(|(_, w)| w.label.clone());
+                            self.set_status(format!(
+                                "New transaction in {}: {} BTC ({}){}",
+                                label.unwrap_or(id.clone()),
+                                super::screens::btc(t.amount),
+                                t.category,
+                                if new.len() > 1 {
+                                    format!(" and {} more", new.len() - 1)
+                                } else {
+                                    String::new()
+                                }
+                            ));
+                        }
+                    }
                     self.data.insert(id, data);
                     super::screens::clamp(self);
                 }
