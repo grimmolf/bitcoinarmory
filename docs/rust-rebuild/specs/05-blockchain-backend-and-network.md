@@ -177,7 +177,7 @@ Core sources cited below come from `raw.githubusercontent.com/bitcoin/bitcoin/ma
 - **Hazard 1: stream stall.**
   - `notfound` is not in `PayloadMap`. Core sends `notfound` for a `getdata` it cannot serve (`:2830`).
   - `FindTxForGetData` only serves a mempool tx if it was in the mempool before Core's last `inv` to that peer (`:2739-2760`). Inbound inv trickle averages 5 s (`:170`).
-  - Armory's post-broadcast `getdata` fires after 3 s (`ArmoryQt.py:3790`, `callLater(3, ...)`), and every tx inv is answered with a `getdata`.
+  - Armory's post-broadcast `getdata` fires after 3 s (`ArmoryQt.py:3791`, `callLater(3, ...)`), and every tx inv is answered with a `getdata`.
   - `notfound` replies are therefore expected. Because of the non-consuming `return` (`Networking.py:120-121`), **one `notfound` freezes the connection forever**: every later `dataReceived` re-parses the same bytes.
 - **Hazard 2: no broadcast feedback.**
   - BIP61 `reject` was removed in Core 0.20 (`release-notes-0.20.0.md:64-100`), so `PayloadReject` never fires.
@@ -220,7 +220,7 @@ Core sources cited below come from `raw.githubusercontent.com/bitcoin/bitcoin/ma
 ### 2.7 Daemon management — REMOVE or REDESIGN
 
 - **Downloading bitcoind** came from the signed `dllinks` announce entries and `versions.txt` (`versions.txt:19-28` pins Core **0.8.1** on SourceForge). Those sources are dead (§3), and the scheme bypasses Core's own release signing.
-  - Fedora and macOS users should install Core themselves: the Fedora package, `bitcoincore.org` tarballs verified with `SHA256SUMS.asc` and guix attestations, or Homebrew.
+  - Fedora and macOS users should install Core themselves: a distribution or third-party package where available, `bitcoincore.org` tarballs verified with `SHA256SUMS.asc` and guix attestations, or Homebrew.
 - **Launching:**
   - `-testnet` is the only network flag (`SDM.py:633-634`). Core's `-testnet` is now marked deprecated in favour of `-testnet4` (`src/chainparamsbase.cpp:23`).
   - The `-dbcache` heuristics are harmless.
@@ -282,7 +282,7 @@ The list comes from `grep -rnoE "(https?|ftp)://..."` over `*.py`, `*.cpp`, `*.h
   - Classification: stale. Point to `bitcoincore.org`. The alerts page and the estimatefee/estimatepriority anchors refer to removed features.
 - `bitcointalk.org` threads (`armoryd.py:39,1921`, `CoinSelection.py:617`, `ArmoryQt.py:5432`, `qtdialogs.py:1811`) are historical references.
 - `github.com/etotheipi/BitcoinArmory` (`README.md:5`, `versions.txt:2` via raw.github, `extras/findpass.py:242`, `release_scripts/Step1_Online_PrepareForSigning.py:22`) is an archived upstream; the goatpig fork superseded it.
-- `chart.googleapis.com/chart?...cht=qr` (`README.md:86`) points at the Google Image Charts QR API, which is deprecated and shut down.
+- `chart.googleapis.com/chart?...cht=qr` (`README.md:86`) points at the deprecated Google Image Charts API, which is not reliable; drop it.
 - `en.bitcoin.it/wiki/...` (`ArmoryUtils.py:2207,2216`, `Transaction.py:860`) and Stack Overflow, Python bug tracker and Qt bug tracker comments are references only.
 
 ### 3.3 Build, release and vendored code
@@ -325,7 +325,7 @@ Armory's value is offline key management, paper and fragmented backups, lockboxe
 
 | Need | RPC | Min Core |
 |---|---|---|
-| Health, network, sync progress, prune state | `getblockchaininfo` (`chain`, `blocks`, `headers`, `initialblockdownload`, `verificationprogress`, `pruned`, `pruneheight`) | 0.9.2 (fields evolved; `getinfo` replacement per 0.16 notes) |
+| Health, network, sync progress, prune state | `getblockchaininfo` (`chain`, `blocks`, `headers`, `initialblockdownload`, `verificationprogress`, `pruned`, `pruneheight`) | long-standing (named as a `getinfo` replacement in the 0.16 notes) |
 | Node version and relay fee | `getnetworkinfo` (`version`, `subversion`, `relayfee`, `incrementalfee`) | — |
 | Create/load watch-only wallet | `createwallet` (`disable_private_keys`, `blank`, `descriptors`), `loadwallet`, `listwallets`, `unloadwallet` | **0.21** for descriptor wallets |
 | Register addresses or scripts | `importdescriptors`, `getdescriptorinfo` (checksum), `listdescriptors` | **0.21** (`getdescriptorinfo` 0.17) |
@@ -335,10 +335,10 @@ Armory's value is offline key management, paper and fragmented backups, lockboxe
 | Raw tx / prevouts for signing (offline PSBT or Armory's own unsigned-tx format) | `gettransaction ... verbose=true` (`hex`, `decoded`); `getrawtransaction` only for wallet txs or with `-txindex` | — |
 | Pre-flight broadcast check | `testmempoolaccept [rawtx,...]` (gives the reject reason, which replaces the dead BIP61) | 0.17 |
 | Broadcast | `sendrawtransaction <hex> [maxfeerate] [maxburnamount]` | — |
-| Fees | `estimatesmartfee <conf_target> [economical\|conservative]` in BTC/kvB, converted to sat/vB; floor at `getnetworkinfo.relayfee` | 0.15 |
+| Fees | `estimatesmartfee <conf_target> [economical\|conservative]` in BTC/kvB, converted to sat/vB; floor at `getnetworkinfo.relayfee` | 0.14 (the recommended estimator since 0.15) |
 | Rescan | `rescanblockchain [start] [stop]`, `abortrescan`, `getwalletinfo.scanning` | 0.16 |
 | Stateless sweep or "check balance without a wallet" | `scantxoutset start [{"desc": ...}]` (UTXO set only, works on pruned nodes, no history; v28 added `blockhash`/`confirmations`, `release-notes-28.0.md:177-178`) | 0.17 |
-| New-block notification | `waitfornewblock [timeout] [current_tip]` long-poll (unhidden and `current_tip` added in 30.0, `release-notes-30.0.md:194-197`) **or** ZMQ `zmqpubhashblock` / `zmqpubrawtx` / `zmqpubsequence` (user must enable them in `bitcoin.conf`) **or** plain polling of `getbestblockhash` every 5-10 s | 0.13 (ZMQ 0.12) |
+| New-block notification | `waitfornewblock [timeout] [current_tip]` long-poll (unhidden and `current_tip` added in 30.0, `release-notes-30.0.md:194-197`) **or** ZMQ `zmqpubhashblock` / `zmqpubrawtx` / `zmqpubsequence` (user must enable them in `bitcoin.conf`) **or** plain polling of `getbestblockhash` every 5-10 s | ZMQ 0.12; `waitfornewblock` was hidden before 30.0 |
 | Shutdown (only if Armory launched the node) | `stop`, then wait for the process to exit; never SIGKILL | — |
 | Optional PSBT path | `walletcreatefundedpsbt`, `decodepsbt`, `finalizepsbt`, `analyzepsbt`, `utxoupdatepsbt` (needs solvable descriptors) | 0.17-0.18 |
 
@@ -352,7 +352,7 @@ Armory's value is offline key management, paper and fragmented backups, lockboxe
 - Discover the datadir (§5) and the network subdir.
 - Read `.cookie`, re-reading it on 401 or after a reconnect.
 - Allow `--rpc-url`, `--rpc-user/--rpc-password` or `--rpc-cookie-file` overrides in Armory's own config.
-- Use JSON-RPC 2.0, which Core recognizes since 28.0 (`release-notes-28.0.md:66-70`).
+- Use JSON-RPC 2.0, which Core recognizes since 28.0 (`release-notes-28.0.md:66-71`).
 - Route wallet calls through `/wallet/<name>`.
 - Suggested crates: `bitcoincore-rpc` (or a thin `reqwest`/`ureq` client of our own; the surface is small), `bitcoin` (rust-bitcoin) for tx, PSBT, address and descriptor types, `miniscript` for descriptor strings, and `zmq` as an optional feature.
 
@@ -448,7 +448,7 @@ Wallet files are highest-value secrets. They belong in a data dir (not cache), c
 | Runtime (single-instance lock/socket) | `$XDG_RUNTIME_DIR/armory/` | `$TMPDIR/armory-<uid>/` |
 
 - Use the `directories` crate (`ProjectDirs::from("", "", "Armory")`) to compute these. On macOS keep the human-readable `Armory` name, which matches the legacy path, so migration on macOS can be in place.
-- Allow a single `--datadir` override that puts everything under one root, for portable or offline-USB use. This mirrors the old `--datadir`, `ArmoryUtils.py:394-404`.
+- Allow a single `--datadir` override that puts everything under one root, for portable or offline-USB use. This mirrors the old `--datadir` (`ArmoryUtils.py:90,393-404`).
 - On first run, if `~/.armory` (Linux) or the legacy macOS directory exists and the new wallet dir is empty, offer to **copy** (never move) `*.wallet` and `multisigs.txt`. Ignore `databases/`.
 - **Network naming:** use `mainnet`, `testnet3`, `testnet4`, `signet` and `regtest` as subdirectories. Do not reuse the empty-string mainnet convention; it caused Armory's `SUBDIR` special-casing (`ArmoryUtils.py:288`).
 

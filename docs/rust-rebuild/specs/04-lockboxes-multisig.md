@@ -746,37 +746,534 @@ merge, sig-script construction) is self-contained and portable.
 
 ---
 
-## Appendix A — condensed reference decoder (Python 3)
+## Appendix A — reference decoder (Python 3, self-contained)
 
-Full script: `…/scratchpad/lbdecode.py` (plus `tv.py`, `tv3.py` for §7).
+Written from this spec (not from Armory code). Run as
+`python3 decoder.py multisigs.txt *.promnote *.sigcollect.tx`; prints
+`<file> <KIND> <headerID> <recomputedID> OK|MISMATCH`. Output on the §6
+fixtures: 8/8 OK. Every Appendix B block except the two legacy ones also
+decodes with recomputed ID == header ID.
 
 ```python
-import base64, hashlib, struct
-B58='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-sha=lambda b: hashlib.sha256(b).digest()
-h256=lambda b: sha(sha(b))
-h160=lambda b: hashlib.new('ripemd160', sha(b)).digest()
+import base64, hashlib, struct, sys, os, re, datetime, json
+
+B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+TESTNET_MAGIC = bytes.fromhex('0b110907')
+MAINNET_MAGIC = bytes.fromhex('f9beb4d9')
+NET = {TESTNET_MAGIC: dict(name='testnet', addr=b'\x6f', p2sh=b'\xc4'),
+       MAINNET_MAGIC: dict(name='mainnet', addr=b'\x00', p2sh=b'\x05')}
+
+def sha256(b): return hashlib.sha256(b).digest()
+def hash256(b): return sha256(sha256(b))
+def hash160(b): return hashlib.new('ripemd160', sha256(b)).digest()
+
 def b58(b):
-    n=int.from_bytes(b,'big'); s=''
-    while n: n,r=divmod(n,58); s=B58[r]+s
-    return '1'*(len(b)-len(b.lstrip(b'\0')))+s
-def armor(txt):
-    t=txt.strip().split(); assert t[0].startswith('=====') and t[-1].startswith('======')
-    return t[0].strip('='), base64.b64decode(''.join(t[1:-1]))
-def ms_parse(s):                      # -> M, N, [pubkeys] in script order
-    M,N=s[0]-80,s[-2]-80; p=1; ks=[]
-    for _ in range(N): L=s[p]; ks.append(s[p+1:p+1+L]); p+=1+L
-    return M,N,ks
-def ms_script(keys,M):
-    ks=sorted(keys); return bytes([80+M])+b''.join(bytes([len(k)])+k for k in ks)+bytes([80+len(ks),0xae])
+    pad = len(b) - len(b.lstrip(b'\x00'))
+    n = int.from_bytes(b, 'big'); s = ''
+    while n > 0:
+        n, r = divmod(n, 58); s = B58[r] + s
+    return '1' * pad + s
+
+def b58check(ver, payload):
+    d = ver + payload
+    return b58(d + hash256(d)[:4])
+
+class R:
+    def __init__(s, b): s.b, s.p = b, 0
+    def take(s, n):
+        if s.p + n > len(s.b): raise ValueError('underrun')
+        v = s.b[s.p:s.p+n]; s.p += n; return v
+    def u8(s): return s.take(1)[0]
+    def u32(s): return struct.unpack('<I', s.take(4))[0]
+    def u64(s): return struct.unpack('<Q', s.take(8))[0]
+    def vi(s):
+        c = s.u8()
+        if c < 0xfd: return c
+        return {0xfd: lambda: struct.unpack('<H', s.take(2))[0],
+                0xfe: s.u32, 0xff: s.u64}[c]()
+    def vs(s): return s.take(s.vi())
+    def rem(s): return len(s.b) - s.p
+
+def read_ascii_block(txt):
+    toks = txt.strip().split()
+    assert toks[0].startswith('=====') and toks[-1].startswith('======')
+    head = toks[0].strip('=')
+    return head, base64.b64decode(''.join(toks[1:-1]))
+
+def split_blocks(all_text, mark):
+    out, pos = [], all_text.find(mark)
+    while pos >= 0:
+        nxt = all_text.find(mark, pos + 1)
+        out.append(all_text[pos: nxt if nxt >= 0 else len(all_text)].strip())
+        pos = nxt
+    return out
+
+# ---------- scripts ----------
+def parse_multisig(script):
+    if script[-1] != 0xae: return None
+    M, N = script[0], script[-2]
+    if not (81 <= M <= 96 and 81 <= N <= 96): return None
+    M -= 80; N -= 80
+    p, pubs = 1, []
+    for _ in range(N):
+        sz = script[p]; p += 1
+        if sz not in (0x21, 0x41): return None
+        pubs.append(script[p:p+sz]); p += sz
+    return M, N, pubs
+
+def make_multisig(pubs, M, sort=True):
+    pk = sorted(pubs) if sort else list(pubs)
+    return bytes([80+M]) + b''.join(bytes([len(k)]) + k for k in pk) + bytes([80+len(pk), 0xae])
+
+def ms_scraddr(script):
+    M, N, pubs = parse_multisig(script)
+    return b'\xfe' + bytes([M, N]) + b''.join(sorted(hash160(k) for k in pubs))
+
 def lockbox_id(script, magic):
-    M,N,ks=ms_parse(script)
-    scr=b'\xfe'+bytes([M,N])+b''.join(sorted(h160(k) for k in ks))
-    return b58(h160(magic+scr))[1:9]
-def prom_id(outpoints, tgt_script, tgt_value, chg_script=b''):
-    return b58(h256(b''.join(sorted(outpoints))+tgt_script+struct.pack('<Q',tgt_value)+chg_script))[:8]
-def ustx_id(ins, outs, locktime=0):   # ins: [(outpoint36, seq)], outs: [(value, script)]
-    b=struct.pack('<I',1)+bytes([len(ins)])+b''.join(op+b'\0'+struct.pack('<I',sq) for op,sq in ins)
-    b+=bytes([len(outs)])+b''.join(struct.pack('<Q',v)+bytes([len(s)])+s for v,s in outs)
-    return b58(h256(b+struct.pack('<I',locktime)))[:8]   # (1-byte varints suffice for these vectors)
+    return b58(hash160(magic + ms_scraddr(script)))[1:9]
+
+def p2sh_script(script): return b'\xa9\x14' + hash160(script) + b'\x87'
+
+def script_desc(script, net):
+    if len(script) == 25 and script[:3] == b'\x76\xa9\x14' and script[-2:] == b'\x88\xac':
+        return 'P2PKH ' + b58check(net['addr'], script[3:23])
+    if len(script) == 23 and script[:2] == b'\xa9\x14' and script[-1] == 0x87:
+        return 'P2SH ' + b58check(net['p2sh'], script[2:22])
+    ms = parse_multisig(script)
+    if ms: return 'MULTISIG %d-of-%d' % (ms[0], ms[1])
+    return 'NONSTD ' + script.hex()
+
+# ---------- objects ----------
+def parse_dpk(raw):
+    r = R(raw)
+    d = dict(version=r.u32(), magic=r.take(4).hex(), pub=r.vs(), comment=r.vs(),
+             wltLoc=r.vs(), authMethod=r.vs(), authData=r.vs())
+    assert r.rem() == 0
+    return d
+
+def dpk_id(pub, net): return b58check(net['addr'], hash160(pub))[:12]
+
+def parse_lockbox(raw):
+    r = R(raw)
+    ver = r.u32(); magic = r.take(4); created = r.u64()
+    if ver == 0:
+        script = r.vs(); name = r.vs(); descr = r.vs(); nc = r.u32()
+        comments = [r.vs() for _ in range(nc)]
+        M, N, pubs = parse_multisig(script)
+        dpks = [dict(pub=p, comment=c) for p, c in zip(pubs, comments)]
+    else:
+        name = r.vs(); descr = r.vs(); M = r.u8(); N = r.u8()
+        dpks = []
+        for _ in range(N):
+            d = parse_dpk(r.vs()); dpks.append(d)
+        script = make_multisig([d['pub'] for d in dpks], M)
+    assert r.rem() == 0, 'trailing bytes'
+    return dict(version=ver, magic=magic, created=created, name=name,
+                descr=descr, M=M, N=N, dpks=dpks, script=script)
+
+def outpoint_ser(txhash, idx): return txhash + struct.pack('<I', idx)
+
+def parse_pytx(raw):
+    r = R(raw); ver = r.u32(); ins = []; outs = []
+    for _ in range(r.vi()):
+        op = r.take(36); scr = r.vs(); seq = r.u32(); ins.append((op, scr, seq))
+    for _ in range(r.vi()):
+        v = r.u64(); s = r.vs(); outs.append((v, s))
+    lt = r.u32(); assert r.rem() == 0
+    return dict(version=ver, ins=ins, outs=outs, locktime=lt)
+
+def parse_ustxi(raw):
+    r = R(raw)
+    d = dict(version=r.u32(), magic=r.take(4), outpoint=r.take(36), supportTx=r.vs(),
+             p2sh=r.vs(), contribID=r.vs(), contribLabel=r.vs(), seq=r.u32())
+    n = r.vi(); d['keys'] = []
+    for _ in range(n):
+        d['keys'].append(dict(pub=r.vs(), sig=r.vs(), loc=r.vs()))
+    assert r.rem() == 0
+    assert d['outpoint'][:32] == hash256(d['supportTx']), 'outpoint hash != hash256(supportTx)'
+    idx = struct.unpack('<I', d['outpoint'][32:])[0]
+    tx = parse_pytx(d['supportTx'])
+    d['value'], d['txoScript'] = tx['outs'][idx]
+    d['idx'] = idx
+    return d
+
+def parse_dtxo(raw):
+    r = R(raw)
+    d = dict(version=r.u32(), magic=r.take(4), script=r.vs(), value=r.u64(), p2sh=r.vs(),
+             wltLoc=r.vs(), authMethod=r.vs(), authData=r.vs(), contribID=r.vs(),
+             contribLabel=r.vs())
+    assert r.rem() == 0
+    return d
+
+def parse_promnote(raw):
+    r = R(raw)
+    d = dict(version=r.u32(), magic=r.take(4))
+    d['target'] = parse_dtxo(r.vs())
+    ch = r.vs(); d['change'] = parse_dtxo(ch) if ch else None
+    d['fee'] = r.u64()
+    d['inputs'] = [parse_ustxi(r.vs()) for _ in range(r.vi())]
+    d['label'] = r.vs(); d['lbKey'] = r.vs()
+    assert r.rem() == 0
+    return d
+
+def prom_id(p):
+    ops = sorted(u['outpoint'] for u in p['inputs'])
+    t = p['target']['script'] + struct.pack('<Q', p['target']['value'])
+    t += p['change']['script'] if p['change'] else b''
+    return b58(hash256(b''.join(ops) + t))[:8]
+
+def parse_ustx(raw):
+    r = R(raw)
+    d = dict(version=r.u32(), magic=r.take(4), locktime=r.u32())
+    d['inputs'] = [parse_ustxi(r.vs()) for _ in range(r.vi())]
+    d['outputs'] = [parse_dtxo(r.vs()) for _ in range(r.vi())]
+    assert r.rem() == 0
+    return d
+
+def varint(n):
+    if n < 0xfd: return bytes([n])
+    if n <= 0xffff: return b'\xfd' + struct.pack('<H', n)
+    if n <= 0xffffffff: return b'\xfe' + struct.pack('<I', n)
+    return b'\xff' + struct.pack('<Q', n)
+
+def ustx_id(u):
+    # PyTx with version=UNSIGNED_TX_VERSION(1), empty scriptSigs, real sequences
+    b = struct.pack('<I', 1) + varint(len(u['inputs']))
+    for i in u['inputs']:
+        b += i['outpoint'] + varint(0) + struct.pack('<I', i['seq'])
+    b += varint(len(u['outputs']))
+    for o in u['outputs']:
+        b += struct.pack('<Q', o['value']) + varint(len(o['script'])) + o['script']
+    b += struct.pack('<I', u['locktime'])
+    return b58(hash256(b))[:8]
+
+def decode_block(txt):
+    """Parse one ASCII block; return (kind, header_id, recomputed_id, obj)."""
+    head, raw = read_ascii_block(txt)
+    kind, hid = head.split('-')[0], head.split('-')[-1]
+    if kind == 'LOCKBOX':
+        o = parse_lockbox(raw); cid = lockbox_id(o['script'], o['magic'])
+    elif kind == 'PUBLICKEY':
+        o = parse_dpk(raw); cid = dpk_id(o['pub'], NET[bytes.fromhex(o['magic'])])
+    elif kind == 'PROMISSORY':
+        o = parse_promnote(raw); cid = prom_id(o)
+    elif kind == 'TXSIGCOLLECT':
+        o = parse_ustx(raw); cid = ustx_id(o)
+    else:
+        raise ValueError(kind)
+    return kind, hid, cid, o
+
+if __name__ == '__main__':
+    import sys
+    for path in sys.argv[1:]:
+        txt = open(path, 'rb').read().decode('utf-8')
+        blocks = split_blocks(txt, '=====LOCKBOX') if '=====LOCKBOX' in txt else [txt]
+        for b in blocks:
+            kind, hid, cid, o = decode_block(b)
+            print(path, kind, hid, cid, 'OK' if hid == cid else 'MISMATCH')
+```
+
+## Appendix B — verbatim test vectors from `pytest/testMultisig.py`
+
+Copied byte-for-byte (indentation removed by `textwrap.dedent`, as the test
+does). Line ranges are the block lines in the source file.
+
+### `asc_nosig` — testMultisig.py:270-283 — **legacy pre-release layout, excluded from conformance** (§7.2)
+
+```
+=====TXSIGCOLLECT-5JxmLy4T======================================================
+AQAAAAsRCQcAAAAAAf19AQEAAAALEQkH/XsoFKgwJMVZsviXpv+aOun4BQHRm+Cuvs/X7O/J3n8BAAAA
+/QMBAQAAAAGcgxlJ0d+ZHi+MzG+laL4qTx/jVH/lPbbKmrGLA1oc8AAAAACMSTBGAiEArOklwdcihg72
+fMu+GvnKF+AdFiMmeT7CWV4KMZmA3kcCIQDyjBMqkI6tFVXMG/yhbBhVg7TNYsAGLjM5UWLfVx57WgFB
+BLmTMVBhjWo901GrcZzZMNBUectdX4ZsVyHhMNjZpaAJxlpQqnjiK9PAvrNqOIgMq8itz9S3KDaOs/Kh
+W6/lJNL/////AsAOFgIAAAAAGXapFInbjSGPxqYLm35NTXhzcAkVf8h8iKwwq98DAAAAABl2qRSBj0Gs
+NlhCyvZkoRO2iRw54544foisAAAAAAAA/////wFBBJ6i78WXHp6ywhTupFpF7A0V2jwQEjE9pWO1+7wZ
+qS+IM59Dur1Ut5OC+yUycjeFHQdqemkBDFT97zMCJalmtXwAAALiAQAAAAsRCQfJUkEEagSrmNnkd0rY
+BuMC3d62O+oWtctfIj7ndHjoYbtYPrM2tvvLYLWz1PFVGsReX/xJNkZufZj2x8Dsc2U590aRpkEEaGgH
+N8dtq7gByyIE9X2+TkV55PcQzWfcG0InWSyB6bXPArWsnotMn0m+UlEFa2ptAR5MN/a20X7ea1X6ojUZ
+4kEEuVwknYT0F+PjlaEnQlQotUBnHMFYgeuCjBe3IqU/xZniHKXlbJDzQJiNOTOsx2vrgy/WTKsHjd88
+5zKSMDHRqFOuoH+IAgAAAAAAAAROT05FADIBAAAACxEJBxl2qRRs7kd5CHIvdApqfOmMDp1dyrD6Mois
+gARXAQAAAAAAAAROT05FAA==
+================================================================================
+```
+
+### `asc_sig` — testMultisig.py:288-302 — **legacy pre-release layout, excluded from conformance** (§7.2)
+
+```
+=====TXSIGCOLLECT-5JxmLy4T======================================================
+AQAAAAsRCQcAAAAAAf3EAQEAAAALEQkH/XsoFKgwJMVZsviXpv+aOun4BQHRm+Cuvs/X7O/J3n8BAAAA
+/QMBAQAAAAGcgxlJ0d+ZHi+MzG+laL4qTx/jVH/lPbbKmrGLA1oc8AAAAACMSTBGAiEArOklwdcihg72
+fMu+GvnKF+AdFiMmeT7CWV4KMZmA3kcCIQDyjBMqkI6tFVXMG/yhbBhVg7TNYsAGLjM5UWLfVx57WgFB
+BLmTMVBhjWo901GrcZzZMNBUectdX4ZsVyHhMNjZpaAJxlpQqnjiK9PAvrNqOIgMq8itz9S3KDaOs/Kh
+W6/lJNL/////AsAOFgIAAAAAGXapFInbjSGPxqYLm35NTXhzcAkVf8h8iKwwq98DAAAAABl2qRSBj0Gs
+NlhCyvZkoRO2iRw54544foisAAAAAAAA/////wFBBJ6i78WXHp6ywhTupFpF7A0V2jwQEjE9pWO1+7wZ
+qS+IM59Dur1Ut5OC+yUycjeFHQdqemkBDFT97zMCJalmtXxHMEQCIF12j4Vj1Shf49BkDWwVzf1kRgYr
+4EIPObgRTVPQz2KkAiAQ28gOniv2A5ozeBCk/rpWHTw2DqqkraEUDYLAPr83NQEAAuIBAAAACxEJB8lS
+QQRqBKuY2eR3StgG4wLd3rY76ha1y18iPud0eOhhu1g+sza2+8tgtbPU8VUaxF5f/Ek2Rm59mPbHwOxz
+ZTn3RpGmQQRoaAc3x22ruAHLIgT1fb5ORXnk9xDNZ9wbQidZLIHptc8Ctayei0yfSb5SUQVram0BHkw3
+9rbRft5rVfqiNRniQQS5XCSdhPQX4+OVoSdCVCi1QGccwViB64KMF7cipT/FmeIcpeVskPNAmI05M6zH
+a+uDL9ZMqweN3zznMpIwMdGoU66gf4gCAAAAAAAABE5PTkUAMgEAAAALEQkHGXapFGzuR3kIci90Cmp8
+6YwOnV3KsPoyiKyABFcBAAAAAAAABE5PTkUA
+================================================================================
+```
+
+### `dpk.nocomment` — testMultisig.py:423-426
+
+```
+=====PUBLICKEY-mqQQMsTsUyGJ=====================================================
+AQAAAAsRCQdBBPXISLf5jl7LafjFYbMVfb+OqjzMD8XGVyBauZ1kNA/tMGoZn5lHdfZRVcNN8D9+9vG9
+GpvTn9PUWZ1uETTewPIAAAAA
+================================================================================
+```
+
+### `dpk.wcomment` — testMultisig.py:430-433
+
+```
+=====PUBLICKEY-mqjMCZC4BFRm=====================================================
+AQAAAAsRCQdBBCMhT2Hr0mjRkNu+VR+JFRczrwE+E+Fbzd5l/XNCHJC6i62liVEVRnasthYQCjiFsv2y
+Yw9HN6LxwO6+eQeBKQEcdGhpcyBpcyBhIHVzZWxlc3MgY29tbWVudCFAIQAAAA==
+================================================================================
+```
+
+### `lockbox.nocomments` — testMultisig.py:437-443
+
+```
+=====LOCKBOX-7mtvkCTa===========================================================
+AQAAAAsRCQclhKNTAAAAAAtTYW1wbGUgMm9mMwACA04BAAAACxEJB0EEIyFPYevSaNGQ275VH4kVFzOv
+AT4T4VvN3mX9c0IckLqLraWJURVGdqy2FhAKOIWy/bJjD0c3ovHA7r55B4EpAQAAAABOAQAAAAsRCQdB
+BMWU5+Df9QeQfI0i+TRNXiImnOGzoIAyVGKhEpa20uN95t7eEN+gOaippJmGbFxQew0C1LTqlUn4C4oa
+NIwDkroAAAAATgEAAAALEQkHQQTOFdjRK/2+hr00V4iRFlzDXMS0Ll3fT+qJ9YSH519IUTsIvhQenODR
+MReXXbfJmcCxUPg3N2TQvLX7iI2GRo2jAAAAAA==
+================================================================================
+```
+
+### `lockbox.nometadata` — testMultisig.py:447-454
+
+```
+=====LOCKBOX-7mtvkCTa===========================================================
+AQAAAAsRCQclhKNTAAAAAAtTYW1wbGUgMm9mMwACA2ABAAAACxEJB0EEIyFPYevSaNGQ275VH4kVFzOv
+AT4T4VvN3mX9c0IckLqLraWJURVGdqy2FhAKOIWy/bJjD0c3ovHA7r55B4EpARJLZXkgIzEgaW4gdGhl
+IGxpc3QAAABWAQAAAAsRCQdBBMWU5+Df9QeQfI0i+TRNXiImnOGzoIAyVGKhEpa20uN95t7eEN+gOaip
+pJmGbFxQew0C1LTqlUn4C4oaNIwDkroIS2V5ICMyISAAAABkAQAAAAsRCQdBBM4V2NEr/b6GvTRXiJEW
+XMNcxLQuXd9P6on1hIfnX0hROwi+FB6c4NExF5ddt8mZwLFQ+Dc3ZNC8tfuIjYZGjaMWS2V5IHdpdGgg
+dW5pY29kZSBkYXRhIQAAAA==
+================================================================================
+```
+
+### `promnote.regular` — testMultisig.py:460-501 (first assignment; overwritten at runtime by the next one)
+
+```
+=====PROMISSORY-CerrVYjD========================================================
+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
+IHRlc3RpbmcgY29tbWVudAA=
+================================================================================
+```
+
+### `promnote.regular` — testMultisig.py:506-516 (second assignment; the one the tests use)
+
+```
+=====PROMISSORY-GVfKYBqK========================================================
+AQAAAAsRCQcyAQAAAAsRCQcXqRSUFt7Fp83rejuvC6FPeHUyzH6RQodQNHQCAAAAAAAABE5PTkUAAAAA
+AAAAAAAAAAAB/YMBAQAAAAsRCQdKjCQZ04S5mekJ7FSvGyohppsRllgQ1lF0D/ewX9Ls6AAAAAD9AAEB
+AAAAATS/9KXacFYJPYQCoSkRSIKYDIIgQ6wZzEdgiipEAVbuAAAAAItIMEUCIE9MTdfNrRrMW8BFe8uC
+N34DMz3wYa+KL6bPkxNpgDUnAiEAnfZxXXfhAdF435vRb1kWxg65NbMAHfbX/bDh9iXQNKYBQQRBul/I
+mA3bgs0PGSJFd3KeQPBPp9LYuduFgnfA+kEKf1GZI4s+EGuxDHvjZoNBwYvWPEgtqYVxvybEXWHwhhou
+/////wJQNHQCAAAAABl2qRSSFcygbZulF1EFISvxCYhFoLBf44isAC0xAQAAAAAXqRSUFt7Fp83rejuv
+C6FPeHUyzH6RQocAAAAAAAhHVmZLWUJxSwD/////AUEEBgLRFKodcJB0fSX3gNeaAM7uNQNM/tL8RcBZ
+4+5P1i6RbjURO9yt34sF0flB8XbiR/T/cUqkn66p/S/Ww3FKEwAAJkR1bXBpbmcgYWxsIG15IGNhc2gg
+aW50byB0aGlzIGRvbmF0aW9uAA==
+================================================================================
+```
+
+### `ustx.regular` — testMultisig.py:522-544
+
+```
+=====TXSIGCOLLECT-8rgLHcFg======================================================
+AQAAAAsRCQcAAAAAAv3EAQEAAAALEQkHc4uuUlna6Cw/HRowBY70IQ52kRVtRw8FNAIkl8SsT7kBAAAA
+/QIBAQAAAAEXA5J+qKVnY8IE4dDBE58Pyp+q1uA/RBkeol1FLLoZFQAAAACLSDBFAiEA0dB7emFmICZD
+NecZeg7eRzjjOKTmg+EZLXca14dg1uYCIBDnAgPWPSMmwaK5ZWpTeCuhn86qDh1KyP87cglKYhWdAUEE
+UtPQusiUYHM/ECQT0yg2oqwdYUsUmer4RyxxD0lxRei8AceGdrnDC5uL/Y6kzW3rQxynEVXBGJI01Qkk
+1frDLP////8CMBsPAAAAAAAZdqkUOW5GJnPKcmK1r9T5oiPKqWm0HSGIrICWmAAAAAAAGXapFHAJXqNd
+6fuLln4Tkl6tDx7sbO/giKwAAAAAAAAA/////wFBBCMhT2Hr0mjRkNu+VR+JFRczrwE+E+Fbzd5l/XNC
+HJC6i62liVEVRnasthYQCjiFsv2yYw9HN6LxwO6+eQeBKQFHMEQCIFlfw+VSIaBS6vDXbs093+fNaFJb
+3GidWizy+UUAhHXZAiAXwqBQPrg2zXMo/VOkEpKlHAHccv2/laZJdwRCE+BnAgEA/ZoCAQAAAAsRCQcR
+yZHa7iCRLwdDH0oHdiOvbDVj5cDoexX5HK0fFh8RvAIAAAD91wEBAAAAAqSzhO8p2UlTYZbBtnV3nyrq
+rfShMZfzDpIdLcm6AQPzAQAAAItIMEUCIQCREoEDVTRz2WqLHbLnDYKpTUhgufQ7je76GxYCyppdGAIg
+HEhwzPsLCdraLY/mBMqotfTE6SPowHeo6LFuH9GYX00BQQRWZgMKp8HBmppMCu35YERTSJSu4EO99s/R
+Q3+jtZINL8XO1XY1S8UM7/ajjM6Wv3g45bGjATcKtGwqhAlIWl1e/////yvlXmEhjTLSBnhishefOy0R
+ldxN3AlytJ2VYlYq1inMAQAAAIxJMEYCIQDqUpfjjR1xuMh2/7cXzSh7cZXOBM0IxpKEaSrXDKvdEgIh
+AKwM/OsjuRcgq6KXyZ0swmVx8o/dGgbCPYCkj2ZI4wweAUEEzhXY0Sv9voa9NFeIkRZcw1zEtC5d30/q
+ifWEh+dfSFE7CL4UHpzg0TEXl123yZnAsVD4Nzdk0Ly1+4iNhkaNo/////8DQIr3AQAAAAAXqRSRUUn/
+7EjvozN4YtftMtBnm438H4fArNgAAAAAABl2qRSfOjzmZuGGa8CNGDprHfriVETn2IisICkbAAAAAAAZ
+dqkUbZs27Nt1uzK2C61o8v2KMbWTJx6IrAAAAAAAAAD/////AUEEId3cF/ZIV3rHris7l19HJqGvR4ED
+HTttl5rxyll0y92LflGgmMdMKHnX6CqOKYS0KJljBV0WaFD0gCcdnaUodkgwRQIgI0xQLY+qnQKi8f65
+5OEAPEv/r0rZnLB/h7qd5LF6hm8CIQCOPpmt1Jr6o1b43VEYg0PNKYzRekLppI3gpVFh0zlM2AEAAjQB
+AAAACxEJBxl2qRQWtJ1IcK7dFugwnF1pwaCGOsMI1oisgJaYAAAAAAAAAAROT05FAAAANAEAAAALEQkH
+GXapFFwtg57h8JGhIbsJLXk23+KqzOo9iKwQAhsAAAAAAAAABE5PTkUAAAA=
+================================================================================
+```
+
+### `ustx.multispend_unsigned` — testMultisig.py:549-565
+
+```
+=====TXSIGCOLLECT-7oXWAFds======================================================
+AQAAAAsRCQcAAAAAAf3UAgEAAAALEQkHSowkGdOEuZnpCexUrxsqIaabEZZYENZRdA/3sF/S7OgBAAAA
+/QABAQAAAAE0v/Sl2nBWCT2EAqEpEUiCmAyCIEOsGcxHYIoqRAFW7gAAAACLSDBFAiBPTE3Xza0azFvA
+RXvLgjd+AzM98GGvii+mz5MTaYA1JwIhAJ32cV134QHReN+b0W9ZFsYOuTWzAB321/2w4fYl0DSmAUEE
+QbpfyJgN24LNDxkiRXdynkDwT6fS2LnbhYJ3wPpBCn9RmSOLPhBrsQx742aDQcGL1jxILamFcb8mxF1h
+8IYaLv////8CUDR0AgAAAAAZdqkUkhXMoG2bpRdRBSEr8QmIRaCwX+OIrAAtMQEAAAAAF6kUlBbexafN
+63o7rwuhT3h1Msx+kUKHAAAAAMlSQQQjIU9h69Jo0ZDbvlUfiRUXM68BPhPhW83eZf1zQhyQuoutpYlR
+FUZ2rLYWEAo4hbL9smMPRzei8cDuvnkHgSkBQQTFlOfg3/UHkHyNIvk0TV4iJpzhs6CAMlRioRKWttLj
+febe3hDfoDmoqaSZhmxcUHsNAtS06pVJ+AuKGjSMA5K6QQTOFdjRK/2+hr00V4iRFlzDXMS0Ll3fT+qJ
+9YSH519IUTsIvhQenODRMReXXbfJmcCxUPg3N2TQvLX7iI2GRo2jU64IN210dmtDVGEA/////wNBBCMh
+T2Hr0mjRkNu+VR+JFRczrwE+E+Fbzd5l/XNCHJC6i62liVEVRnasthYQCjiFsv2yYw9HN6LxwO6+eQeB
+KQEAAEEExZTn4N/1B5B8jSL5NE1eIiac4bOggDJUYqESlrbS433m3t4Q36A5qKmkmYZsXFB7DQLUtOqV
+SfgLiho0jAOSugAAQQTOFdjRK/2+hr00V4iRFlzDXMS0Ll3fT+qJ9YSH519IUTsIvhQenODRMReXXbfJ
+mcCxUPg3N2TQvLX7iI2GRo2jAAACNAEAAAALEQkHGXapFCd8VsRZVBUqMoQpIAAPglG9VyAiiKxwb5gA
+AAAAAAAABE5PTkUAAAAyAQAAAAsRCQcXqRSUFt7Fp83rejuvC6FPeHUyzH6RQoeAlpgAAAAAAAAABE5P
+TkUAAAA=
+================================================================================
+```
+
+### `ustx.multispend_partsign` — testMultisig.py:569-586
+
+```
+=====TXSIGCOLLECT-7oXWAFds======================================================
+AQAAAAsRCQcAAAAAAf0bAwEAAAALEQkHSowkGdOEuZnpCexUrxsqIaabEZZYENZRdA/3sF/S7OgBAAAA
+/QABAQAAAAE0v/Sl2nBWCT2EAqEpEUiCmAyCIEOsGcxHYIoqRAFW7gAAAACLSDBFAiBPTE3Xza0azFvA
+RXvLgjd+AzM98GGvii+mz5MTaYA1JwIhAJ32cV134QHReN+b0W9ZFsYOuTWzAB321/2w4fYl0DSmAUEE
+QbpfyJgN24LNDxkiRXdynkDwT6fS2LnbhYJ3wPpBCn9RmSOLPhBrsQx742aDQcGL1jxILamFcb8mxF1h
+8IYaLv////8CUDR0AgAAAAAZdqkUkhXMoG2bpRdRBSEr8QmIRaCwX+OIrAAtMQEAAAAAF6kUlBbexafN
+63o7rwuhT3h1Msx+kUKHAAAAAMlSQQQjIU9h69Jo0ZDbvlUfiRUXM68BPhPhW83eZf1zQhyQuoutpYlR
+FUZ2rLYWEAo4hbL9smMPRzei8cDuvnkHgSkBQQTFlOfg3/UHkHyNIvk0TV4iJpzhs6CAMlRioRKWttLj
+febe3hDfoDmoqaSZhmxcUHsNAtS06pVJ+AuKGjSMA5K6QQTOFdjRK/2+hr00V4iRFlzDXMS0Ll3fT+qJ
+9YSH519IUTsIvhQenODRMReXXbfJmcCxUPg3N2TQvLX7iI2GRo2jU64IN210dmtDVGEA/////wNBBCMh
+T2Hr0mjRkNu+VR+JFRczrwE+E+Fbzd5l/XNCHJC6i62liVEVRnasthYQCjiFsv2yYw9HN6LxwO6+eQeB
+KQEAAEEExZTn4N/1B5B8jSL5NE1eIiac4bOggDJUYqESlrbS433m3t4Q36A5qKmkmYZsXFB7DQLUtOqV
+SfgLiho0jAOSukcwRAIgK0UqQSZCBtaE6vQIQzd2cux7lCYz5F9WOsStmXuAy/4CIBogV6OLRM/W8Ia4
+nc8m+JpnnQgVh+/LtO8OaNW4ev8+AQBBBM4V2NEr/b6GvTRXiJEWXMNcxLQuXd9P6on1hIfnX0hROwi+
+FB6c4NExF5ddt8mZwLFQ+Dc3ZNC8tfuIjYZGjaMAAAI0AQAAAAsRCQcZdqkUJ3xWxFlUFSoyhCkgAA+C
+Ub1XICKIrHBvmAAAAAAAAAAETk9ORQAAADIBAAAACxEJBxepFJQW3sWnzet6O68LoU94dTLMfpFCh4CW
+mAAAAAAAAAAETk9ORQAAAA==
+================================================================================
+```
+
+### `ustx.multispend_enoughsign` — testMultisig.py:590-608
+
+```
+=====TXSIGCOLLECT-7oXWAFds======================================================
+AQAAAAsRCQcAAAAAAf1jAwEAAAALEQkHSowkGdOEuZnpCexUrxsqIaabEZZYENZRdA/3sF/S7OgBAAAA
+/QABAQAAAAE0v/Sl2nBWCT2EAqEpEUiCmAyCIEOsGcxHYIoqRAFW7gAAAACLSDBFAiBPTE3Xza0azFvA
+RXvLgjd+AzM98GGvii+mz5MTaYA1JwIhAJ32cV134QHReN+b0W9ZFsYOuTWzAB321/2w4fYl0DSmAUEE
+QbpfyJgN24LNDxkiRXdynkDwT6fS2LnbhYJ3wPpBCn9RmSOLPhBrsQx742aDQcGL1jxILamFcb8mxF1h
+8IYaLv////8CUDR0AgAAAAAZdqkUkhXMoG2bpRdRBSEr8QmIRaCwX+OIrAAtMQEAAAAAF6kUlBbexafN
+63o7rwuhT3h1Msx+kUKHAAAAAMlSQQQjIU9h69Jo0ZDbvlUfiRUXM68BPhPhW83eZf1zQhyQuoutpYlR
+FUZ2rLYWEAo4hbL9smMPRzei8cDuvnkHgSkBQQTFlOfg3/UHkHyNIvk0TV4iJpzhs6CAMlRioRKWttLj
+febe3hDfoDmoqaSZhmxcUHsNAtS06pVJ+AuKGjSMA5K6QQTOFdjRK/2+hr00V4iRFlzDXMS0Ll3fT+qJ
+9YSH519IUTsIvhQenODRMReXXbfJmcCxUPg3N2TQvLX7iI2GRo2jU64IN210dmtDVGEA/////wNBBCMh
+T2Hr0mjRkNu+VR+JFRczrwE+E+Fbzd5l/XNCHJC6i62liVEVRnasthYQCjiFsv2yYw9HN6LxwO6+eQeB
+KQEAAEEExZTn4N/1B5B8jSL5NE1eIiac4bOggDJUYqESlrbS433m3t4Q36A5qKmkmYZsXFB7DQLUtOqV
+SfgLiho0jAOSukcwRAIgK0UqQSZCBtaE6vQIQzd2cux7lCYz5F9WOsStmXuAy/4CIBogV6OLRM/W8Ia4
+nc8m+JpnnQgVh+/LtO8OaNW4ev8+AQBBBM4V2NEr/b6GvTRXiJEWXMNcxLQuXd9P6on1hIfnX0hROwi+
+FB6c4NExF5ddt8mZwLFQ+Dc3ZNC8tfuIjYZGjaNIMEUCIQC5OkpGv/UnK/ih2GiUf9zHhBeJjYJG7YVM
+ZvaRfXiZTgIgPsSob1XTyyX6i4HrKut4N+BjCQIoFT2xjFxwzXPcxGgBAAI0AQAAAAsRCQcZdqkUJ3xW
+xFlUFSoyhCkgAA+CUb1XICKIrHBvmAAAAAAAAAAETk9ORQAAADIBAAAACxEJBxepFJQW3sWnzet6O68L
+oU94dTLMfpFCh4CWmAAAAAAAAAAETk9ORQAAAA==
+================================================================================
+```
+
+### `ustx.multispend_oversign` — testMultisig.py:612-631
+
+```
+=====TXSIGCOLLECT-7oXWAFds======================================================
+AQAAAAsRCQcAAAAAAf2rAwEAAAALEQkHSowkGdOEuZnpCexUrxsqIaabEZZYENZRdA/3sF/S7OgBAAAA
+/QABAQAAAAE0v/Sl2nBWCT2EAqEpEUiCmAyCIEOsGcxHYIoqRAFW7gAAAACLSDBFAiBPTE3Xza0azFvA
+RXvLgjd+AzM98GGvii+mz5MTaYA1JwIhAJ32cV134QHReN+b0W9ZFsYOuTWzAB321/2w4fYl0DSmAUEE
+QbpfyJgN24LNDxkiRXdynkDwT6fS2LnbhYJ3wPpBCn9RmSOLPhBrsQx742aDQcGL1jxILamFcb8mxF1h
+8IYaLv////8CUDR0AgAAAAAZdqkUkhXMoG2bpRdRBSEr8QmIRaCwX+OIrAAtMQEAAAAAF6kUlBbexafN
+63o7rwuhT3h1Msx+kUKHAAAAAMlSQQQjIU9h69Jo0ZDbvlUfiRUXM68BPhPhW83eZf1zQhyQuoutpYlR
+FUZ2rLYWEAo4hbL9smMPRzei8cDuvnkHgSkBQQTFlOfg3/UHkHyNIvk0TV4iJpzhs6CAMlRioRKWttLj
+febe3hDfoDmoqaSZhmxcUHsNAtS06pVJ+AuKGjSMA5K6QQTOFdjRK/2+hr00V4iRFlzDXMS0Ll3fT+qJ
+9YSH519IUTsIvhQenODRMReXXbfJmcCxUPg3N2TQvLX7iI2GRo2jU64IN210dmtDVGEA/////wNBBCMh
+T2Hr0mjRkNu+VR+JFRczrwE+E+Fbzd5l/XNCHJC6i62liVEVRnasthYQCjiFsv2yYw9HN6LxwO6+eQeB
+KQFIMEUCIEp1ufpfgI5z1XwcZ9i8B7x7XwJ3mkUyCq56bOcuPTmqAiEA4V68y5iExV7VZbPqcdIxWS/w
+WA8PpFqbkdqw/kJQNb4BAEEExZTn4N/1B5B8jSL5NE1eIiac4bOggDJUYqESlrbS433m3t4Q36A5qKmk
+mYZsXFB7DQLUtOqVSfgLiho0jAOSukcwRAIgK0UqQSZCBtaE6vQIQzd2cux7lCYz5F9WOsStmXuAy/4C
+IBogV6OLRM/W8Ia4nc8m+JpnnQgVh+/LtO8OaNW4ev8+AQBBBM4V2NEr/b6GvTRXiJEWXMNcxLQuXd9P
+6on1hIfnX0hROwi+FB6c4NExF5ddt8mZwLFQ+Dc3ZNC8tfuIjYZGjaNIMEUCIQC5OkpGv/UnK/ih2GiU
+f9zHhBeJjYJG7YVMZvaRfXiZTgIgPsSob1XTyyX6i4HrKut4N+BjCQIoFT2xjFxwzXPcxGgBAAI0AQAA
+AAsRCQcZdqkUJ3xWxFlUFSoyhCkgAA+CUb1XICKIrHBvmAAAAAAAAAAETk9ORQAAADIBAAAACxEJBxep
+FJQW3sWnzet6O68LoU94dTLMfpFCh4CWmAAAAAAAAAAETk9ORQAAAA==
+================================================================================
+```
+
+### `ustx.ss2ms_unsigned` — testMultisig.py:635-645
+
+```
+=====TXSIGCOLLECT-HJqTvsXR======================================================
+AQAAAAsRCQcAAAAAAf17AQEAAAALEQkH0yTdj/1epai7+ozi6P+QAGb7SC7heN8KKd7MXaylqCEBAAAA
+/QABAQAAAAFzi65SWdroLD8dGjAFjvQhDnaRFW1HDwU0AiSXxKxPuQEAAACLSDBFAiEAkbFWoFx5lKs+
+Q0OY3TL3lo1ckIeiZOPWB0giLsMvrP0CICJ26+e5IB8l20Luaj2+zxWCu7bxYpyFqB8AaPXBaB7/AUEE
+IyFPYevSaNGQ275VH4kVFzOvAT4T4VvN3mX9c0IckLqLraWJURVGdqy2FhAKOIWy/bJjD0c3ovHA7r55
+B4EpAf////8CQEtMAAAAAAAXqRTlgY0MJP3lDak826GfCJM965UHXIcwJEwAAAAAABl2qRRdhR54M5b6
+KlxBD4fX4V7mP5EOKoisAAAAAAAAAP////8BQQT8+7E+Bne+Y73xPhAyqyWhlR4GNkYQsKcZvrWzNd/u
+IHyxhCAOyWMdec+GFKDLijYgqVTXkF41k6cJCQtRMbvhAAACMgEAAAALEQkHF6kUlBbexafN63o7rwuh
+T3h1Msx+kUKHAAk9AAAAAAAAAAROT05FAAAANAEAAAALEQkHGXapFLJqoSyMxawfCdRd3e5nFzk56v3l
+iKwg9A4AAAAAAAAABE5PTkUAAAA=
+================================================================================
+```
+
+### `ustx.ss2ms_signed` — testMultisig.py:649-660
+
+```
+=====TXSIGCOLLECT-HJqTvsXR======================================================
+AQAAAAsRCQcAAAAAAf3CAQEAAAALEQkH0yTdj/1epai7+ozi6P+QAGb7SC7heN8KKd7MXaylqCEBAAAA
+/QABAQAAAAFzi65SWdroLD8dGjAFjvQhDnaRFW1HDwU0AiSXxKxPuQEAAACLSDBFAiEAkbFWoFx5lKs+
+Q0OY3TL3lo1ckIeiZOPWB0giLsMvrP0CICJ26+e5IB8l20Luaj2+zxWCu7bxYpyFqB8AaPXBaB7/AUEE
+IyFPYevSaNGQ275VH4kVFzOvAT4T4VvN3mX9c0IckLqLraWJURVGdqy2FhAKOIWy/bJjD0c3ovHA7r55
+B4EpAf////8CQEtMAAAAAAAXqRTlgY0MJP3lDak826GfCJM965UHXIcwJEwAAAAAABl2qRRdhR54M5b6
+KlxBD4fX4V7mP5EOKoisAAAAAAAAAP////8BQQT8+7E+Bne+Y73xPhAyqyWhlR4GNkYQsKcZvrWzNd/u
+IHyxhCAOyWMdec+GFKDLijYgqVTXkF41k6cJCQtRMbvhRzBEAiARp54CUAAnSuKOwadJpeh1krlJyEGX
+ZqTV9KP4J8/1VwIgCI8MOAE4lIynyJ7aOSkIJ7KUjMn6aMCJTolck+gwXX8BAAIyAQAAAAsRCQcXqRSU
+Ft7Fp83rejuvC6FPeHUyzH6RQocACT0AAAAAAAAABE5PTkUAAAA0AQAAAAsRCQcZdqkUsmqhLIzFrB8J
+1F3d7mcXOTnq/eWIrCD0DgAAAAAAAAAETk9ORQAAAA==
+================================================================================
 ```

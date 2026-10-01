@@ -219,3 +219,170 @@ All of this area is reachable only in Expert mode (MultiSig menu `ArmoryQt.py:79
 | ND-23 | Install Bitcoin Core on Linux (dormant) | `DlgInstallLinux` `qtdialogs.py:10707`, `tryInstallLinux` 10955, `DlgDownloadFile` 10992, `DlgInstallWindows` 10986 | Options: install from bitcoin.org PPA (Ubuntu, imports GPG key), or download & unpack signed binaries to a custom location and set `SatoshiExe`. No caller in this build (replaced by Secure Downloader). | dormant | `DlgDownloadFile` hash check, `unpackLinuxTarGz` (`ArmoryQt.py:6702`) |
 | ND-24 | Non-standard bitcoind ports / dirs | CLI `--satoshi-datadir`, `--satoshi-port`, `--satoshi-rpcport`, `--dbdir`; startup warnings `ArmoryQt.py:852-873` | If a given directory does not exist, Armory warns and falls back to the default. | CLI | `BITCOIN_PORT`, `BITCOIN_RPC_PORT` |
 | ND-25 | Testnet | CLI `--testnet` | Switches network magic, address bytes, ports (18333/18332/18225/8224), data subdir `testnet3`, green icons/title "[TESTNET]", testnet block explorer; disables URI registration and enables plugin loading. | CLI | `USE_TESTNET`, `ADDRBYTE`, `P2SHBYTE` |
+
+## 10. Settings
+
+### 10.1 Settings dialog and preference features
+
+| ID | Feature | Location | Behaviour / options / fields | Mode | Engine calls |
+|---|---|---|---|---|---|
+| ST-01 | Armory Settings dialog | File→Settings... `ArmoryQt.py:631`; `openSettings` 1404; dashboard "Change Settings"; `DlgSettings` `qtdialogs.py:8704` (save in `accept` 9275) | Single scrolling form with Save/Cancel; rows ST-02..ST-15. Saving re-applies announcement fetcher, ledger, and may require restart (user mode, Tor). | S+ | `SettingsFile.set` |
+| ST-02 | Manage Bitcoin Core | `qtdialogs.py:8712-8745`, `clickChkManage` 9431 | Checkbox "Let Armory run Bitcoin-Qt/bitcoind in the background" (`ManageSatoshi`); when checked: "Bitcoin Install Dir" (`SatoshiExe`, path to directory containing bitcoind; empty → setting deleted) and "Bitcoin Home Dir" (`SatoshiDatadir`; empty → deleted), validated for existence. | S+ | — |
+| ST-03 | Skip online check | `qtdialogs.py:8777` | "Skip online check on startup (assume internet is available, do not check)" → `SkipOnlineCheck`. | S+ | — |
+| ST-04 | Skip version check (dormant) | `qtdialogs.py:8783` | Checkbox "Skip periodic version queries to Armory server" reads `SkipVersionCheck` but is not added to the layout nor saved. | dormant | — |
+| ST-05 | Disable torrent | `qtdialogs.py:8789` | "Disable torrent download (force synchronization via Bitcoin P2P)" → `DisableTorrent`. | S+ | — |
+| ST-06 | Privacy: disable stats reporting | `qtdialogs.py:8797-8815` | "Disable OS and version reporting" → `SkipStatsReport` (announcement fetches omit OS/version/monthly ID). | S+ | `AnnounceDataFetcher.setStatsDisable` |
+| ST-07 | Privacy: Tor/proxy mode | `qtdialogs.py:8815`, effect at 9356 | "Enable settings for proxies/Tor" → `UseTorSettings` (skips online check and all announcement fetching; equivalent of `--tor`); changing prompts restart. | S+ | — |
+| ST-08 | Default URI handler | `qtdialogs.py:8834-8840`, 9317 | Button "Set Armory as Default" (calls `setupUriRegistration(justDoIt=True)`); checkbox "Check whether Armory is the default handler at startup" (stored inverted as `DNAA_DefaultApp`). | S+ | MI-08 |
+| ST-09 | Default transaction fee | `qtdialogs.py:8914-8935`, 9322 | Text field (BTC) → `Default_Fee` (satoshis, default 10000). | S+ | `str2coin` |
+| ST-10 | Tray behaviour | `qtdialogs.py:8950-8960`, 9343-9347 | "Minimize to system tray on open" → `MinimizeOnOpen`; "Minimize to system tray on close" → `MinimizeOrClose` = Minimize / Close. | S+ | — |
+| ST-11 | Notification toggles | `qtdialogs.py:8970-8991`, 9350-9353 | Checkboxes: Bitcoins Received (`NotifyBtcIn`), Bitcoins Sent (`NotifyBtcOut`), Bitcoin-Qt/bitcoind disconnected (`NotifyDiscon`), Bitcoin-Qt/bitcoind reconnected (`NotifyReconn`). Disabled on OS X < 10.7 (no notification support). | S+ | — |
+| ST-12 | Announcement priority threshold | `qtdialogs.py:8862-8897`, 9377-9383 | Radios mapping to `NotifyMinPriority`: "(Level 1) All announcements including testing/unstable versions" (→ 0), "(Level 2) Standard announcements and notifications" (→ 2048), "(Level 3) Only important announcements and alerts" (→ 3072), "(Level 4) Only critical security alerts" (→ 4096); default 2048 (`DEFAULT_MIN_PRIORITY` `announcefetch.py:18`). "Reset Notifications" button clears `NotifyIgnore`. Checkbox "Disable software upgrade notifications" → `DisableUpgradeNotify`. | S+ | — |
+| ST-13 | Date format | `qtdialogs.py:9013-9045`; `getPreferredDateFormat`/`setPreferredDateFormat` `ArmoryQt.py:1831/1839` | strftime format string with live example and "Reset to Default" (`%Y-%b-%d %I:%M%p`); validated by formatting a test timestamp; stored hex-encoded in `DateFormat`. Used by ledgers and CSV export. | S+ | `unixTimeToFormatStr` |
+| ST-14 | Preferred user mode | `qtdialogs.py:9078-9090`, 9333-9340; `setUsermodeDescr` 9396 | Combo Standard / Advanced / Expert with description text; same effect as User menu (ST-15). | S+ | `setUserMode` |
+| ST-15 | User menu (mode switch) | `ArmoryQt.py:642-674`; `setUserMode` 1809 | Exclusive checkable Standard / Advanced / Expert; writes `User_Mode`; info "You may have to restart Armory". | S+ | — |
+| ST-16 | Per-wallet remembered choices | see 10.4 | Ledger visibility, ownership, change behaviour, DNAA reminders. | S+ | `getWltSetting`/`setWltSetting` `ArmoryQt.py:2946/2958` |
+| ST-17 | Window/table geometry persistence | `closeForReal` `ArmoryQt.py:6745`; dialogs' `saveGeometrySettings` | Hex-encoded Qt geometry + column widths per window (see 10.3 `*Geometry`, `*Cols`, `*Tbl`). TUI analogue: remember pane sizes/sort orders. | bg | `saveTableView`/`restoreTableView` (`qtdefines.py`) |
+| ST-18 | Last directory memory | `getFileSave`/`getFileLoad` `ArmoryQt.py:2878/2913` | File dialogs start in `LastDirectory` (default ARMORY_HOME_DIR); updated after each choice; repeated extensions stripped (`RemoveRepeatingExtensions` decorator). | bg | — |
+| ST-19 | Endianness preference (no UI) | `PrefEndian` read at `qtdialogs.py:3879, 5832` | Controls display of hashes; default `BIGENDIAN`. | bg | — |
+
+### 10.2 Command-line options (`armoryengine/ArmoryUtils.py:89-131`, shared by ArmoryQt and armoryd)
+
+| ID | Option | dest | Type / default | Effect |
+|---|---|---|---|---|
+| CL-01 | `--settings` | settingsPath | str, DEFAULT → `<datadir>/ArmorySettings.txt` (`ArmoryUtils.py:431`) | Use a specific settings file. |
+| CL-02 | `--datadir` | datadir | str, DEFAULT → `~/.armory` (Linux), `%APPDATA%\Armory` (Win), `~/Library/Application Support/Armory` (OS X); `+/testnet3` on testnet | Armory home (wallets, settings, logs, multisigs, flags). Falls back to default (with GUI warning) if it cannot be created. |
+| CL-03 | `--satoshi-datadir` | satoshiHome | str, DEFAULT → `~/.bitcoin` / `%APPDATA%\Bitcoin` / `~/Library/Application Support/Bitcoin` (+`testnet3`) | Bitcoin Core home (blk files). Warning + fallback if missing. |
+| CL-04 | `--satoshi-port` | satoshiPort | str, DEFAULT → 8333 / 18333 | Bitcoin P2P port Armory connects to (`BITCOIN_PORT`). |
+| CL-05 | `--satoshi-rpcport` | satoshiRpcport | str, DEFAULT → 8332 / 18332 | Bitcoin JSON-RPC port used by SDM (`BITCOIN_RPC_PORT`). |
+| CL-06 | `--bitcoind-path` | bitcoindPath | commented out (`ArmoryUtils.py:94`) | Not available; use setting `SatoshiExe`. |
+| CL-07 | `--dbdir` | armoryDBDir | str, DEFAULT → `<datadir>/databases` | Armory LevelDB location; fallback warning. |
+| CL-08 | `--rpcport` | rpcport | str, DEFAULT → 8225 / 18225 | armoryd JSON-RPC listen port (`ARMORY_RPC_PORT`). |
+| CL-09 | `--testnet` | testnet | flag, False | Testnet mode (ND-25). |
+| CL-10 | `--offline` | offline | flag, False | Force offline mode; also disables announcement checks unless `--test-announce`. |
+| CL-11 | `--nettimeout` | nettimeout | int, 2 | Seconds for internet probe at startup. |
+| CL-12 | `--interport` | interport | int, -1 → 8223 (mainnet) / 8224 (testnet) | Single-instance/URI IPC TCP port on 127.0.0.1; ≤1 disables (URI handling then broken). |
+| CL-13 | `--debug` | doDebug | flag, False | Debug-level logging. |
+| CL-14 | `--nologging` | logDisable | flag, False | Disable all logging. |
+| CL-15 | `--netlog` | netlog | flag, False | Log P2P messages. |
+| CL-16 | `--logfile` | logFile | str, DEFAULT → `<datadir>/armorylog.txt` (ArmoryQt/armoryd) or `<basename>.log.txt` for other scripts | Python log path (C++ log `armorycpplog.txt`). |
+| CL-17 | `--mtdebug` | mtdebug | flag, False | Log multi-threaded call sequences. |
+| CL-18 | `--skip-online-check` | forceOnline | flag, False | Assume internet available. |
+| CL-19 | `--skip-stats-report` | skipStatsReport | flag, False | Announcement fetch without OS/version stats. |
+| CL-20 | `--skip-announce-check` | skipAnnounceCheck | flag, False | Never query announcements. |
+| CL-21 | `--tor` | useTorSettings | flag, False | Tor-friendly settings (skip online check + announcements). |
+| CL-22 | `--keypool` | keypool | int, 100 | Address lookahead for wallets. |
+| CL-23 | `--redownload` | redownload | flag, False | Delete Bitcoin Core DBs and re-download (implies rebuild). |
+| CL-24 | `--rebuild` | rebuild | flag, False | Rebuild Armory DB and rescan. |
+| CL-25 | `--rescan` | rescan | flag, False | Rescan existing DB. |
+| CL-26 | `--disable-torrent` | disableTorrent | flag, False | P2P-only blockchain sync. |
+| CL-27 | `--test-announce` | testAnnounceCode | flag, False | Developer: test announcement code with non-offline keys; allows fetch even with `--offline`. |
+| CL-28 | `--nospendzeroconfchange` | ignoreAllZC | flag, False | All zero-conf outputs unspendable (`IGNOREZC`). |
+| CL-29 | `--multisigfile` | multisigFile | str, DEFAULT → `<datadir>/multisigs.txt` | Lockbox storage file. |
+| CL-30 | `--force-wallet-check` | forceWalletCheck | flag, False | Force wallet consistency check at startup (`DO_WALLET_CHECK`). |
+| CL-31 | `--disable-modules` | disableModules | flag, False | Do not load plugins from `<execdir>/modules`. |
+| CL-32 | `--disable-conf-permis` | disableConfPermis | flag, False | Don't chmod 600 `bitcoin.conf`. |
+| CL-33 | `--disable-detsign` | enableDetSign=False | flag | Disable RFC 6979 deterministic signing. |
+| CL-34 | `--enable-detsign` | enableDetSign=True | flag, default True (`parser.set_defaults`) | Enable RFC 6979 (default). |
+| CL-35 | `--supernode` | enableSupernode | flag, False | Exhaustive blockchain tracking (index all addresses). |
+| CL-36 | `-p`, `--psn` | psn | OS X only (`ArmoryUtils.py:126`) | Accepted and ignored (Finder process serial number). |
+| CL-37 | `--port` | port | int, None | Unit-test harness argument; accepted, ignored. |
+| CL-38 | `--verbosity` | verbosity | int, None | Unit-test argument; ignored. |
+| CL-39 | `--coverage_output_dir` | coverageOutputDir | str, None | Unit-test argument; ignored. |
+| CL-40 | `--coverage_include` | coverageInclude | str, None | Unit-test argument; ignored. |
+| CL-41 | Positional arg (ArmoryQt) | `CLI_ARGS[0]` | — | A `bitcoin:` URI: forwarded to a running instance via the IPC port, or opened after startup (`ArmoryQt.py:832`, 7063). |
+| CL-42 | Positional args (armoryd) | `CLI_ARGS` | — | If a server is already running: `<method> [args...]` is sent as a JSON-RPC call (args beginning with `{` are parsed as JSON); otherwise starts the server (RPC section 12.2). |
+
+### 10.3 Global settings keys (`ArmorySettings.txt`)
+
+Format (`SettingsFile` `armoryengine/ArmoryUtils.py:3507`): one `Key | value` per line (key left-justified to 36 chars); lists are `v1 $ v2 $ ...`; numbers parsed back to int/float, `True`/`False` to bool. The file is rewritten on every `set`. `getSettingOrSetDefault` writes the default the first time it is read.
+
+| ID | Key | Default | Read / written at | Meaning / UI |
+|---|---|---|---|---|
+| SK-01 | `AddrBookGeometry` | '' | `qtdialogs.py:8283` | Address Book window geometry (hex). |
+| SK-02 | `AddrBookRxTbl` | '' | `qtdialogs.py:8285` | Address Book receiving-table column widths. |
+| SK-03 | `AddrBookTxTbl` | '' | `qtdialogs.py:8286` | Address Book sending-table column widths. |
+| SK-04 | `AddrBookWltTbl` | '' | `qtdialogs.py:8284` | Address Book wallet-table column widths. |
+| SK-05 | `AdvFeature_UseCt` | 0 | `ArmoryQt.py:2752` | Written on first load; unused. |
+| SK-06 | `Agreed_to_EULA` | False | `ArmoryQt.py:226`, `qtdialogs.py:4038` | EULA accepted (HU-09). |
+| SK-07 | `AlwaysArmoryURI` | False | `ArmoryQt.py:1604` | Windows: remembered answer "always register as bitcoin: handler". |
+| SK-08 | `DNAA_AllBackupWarn` | False | `qtdialogs.py:1822` | Global suppression of backup reminders (no writer in UI). |
+| SK-09 | `DNAA_DefaultApp` | False | `ArmoryQt.py:1543,1603`; `qtdialogs.py:8839,9317` | Don't ask about default URI handler. |
+| SK-10 | `DNAA_DeleteLevelDB` | False | `ArmoryQt.py:874` | Don't ask to delete pre-0.93 DB dirs. |
+| SK-11 | `DNAA_ImportWarning` | False | `qtdialogs.py:2142` | Don't show import-key warning. |
+| SK-12 | `DNAA_IntroDialog` | False | `ArmoryQt.py:1712` | Don't show "Greetings!" intro. |
+| SK-13 | `DNAA_MailtoWarn` | False | `ui/MultiSigDialogs.py:2384` | Don't warn about mailto: lockbox emails. |
+| SK-14 | `DNAA_P2SHCompatWarn` | False | `ui/MultiSigDialogs.py:1452` | Don't warn about P2SH compatibility when funding lockboxes. |
+| SK-15 | `DNAA_ReviewOfflineTx` | False | `ui/TxFrames.py:1523` | Don't warn to review offline tx before signing. |
+| SK-16 | `DNAA_UnlockTimeout` | False | `ArmoryQt.py:2742` | Created, unused. |
+| SK-17 | `DNAA_Version092Warn` | False | `ArmoryQt.py:1667` | Don't show offline-format warning. |
+| SK-18 | `DNAA_WarnPrintKeys` | False | `qtdialogs.py:5536` | Don't warn when saving key lists. |
+| SK-19 | `DateFormat` | hex(`%Y-%b-%d %I:%M%p`) | `ArmoryQt.py:1835` | Preferred strftime (hex-encoded). |
+| SK-20 | `DefaultLinkText` | hex("Click here to pay for your order!") | `qtdialogs.py:9800,10004` | Payment-request link text (may carry `FFFFFFFF` prefix hack). |
+| SK-21 | `Default_Fee` | 10000 (`MIN_TX_FEE`) | `ui/TxFrames.py:44`; `qtdialogs.py:8914,9322` | Default fee in satoshis. |
+| SK-22 | `DisableTorrent` | False | `ArmoryQt.py:2458`; `qtdialogs.py:8791,9313` | Disable torrent bootstrap. |
+| SK-23 | `DisableUpgradeNotify` | False | `ArmoryQt.py:2152`; `qtdialogs.py:8875,9385` | Suppress upgrade popups. |
+| SK-24 | `DispRmFee` | '' (falsy) | `armorymodels.py:420` | Ledger amount excludes fee if set; no writer. |
+| SK-25 | `DonateAlready` | False | `ui/TxFrames.py:246` | Read only. |
+| SK-26 | `DonateDNAA` | False | `ui/TxFrames.py:249,292` | Never ask to donate. |
+| SK-27 | `DonateFreq` | 20 | `ui/TxFrames.py:248` | Loads between donation prompts. |
+| SK-28 | `DonateLastPester` | 0 | `ui/TxFrames.py:247,285` | Load count of last donation prompt. |
+| SK-29 | `DustLedgerCols` | '' | `samplemodules/DustBGonePlugin.py:175` | Plugin table widths. |
+| SK-30 | `Excluded_Wallets` | [] (list) | `ArmoryQt.py:2793` | Wallet paths or IDs to skip at load; no UI. |
+| SK-31 | `FailedLoadCount` | 0 | `ArmoryQt.py:2532`, reset 3171 | Consecutive blockchain-load failures. |
+| SK-32 | `First_Load` | True | `ArmoryQt.py:2738-2753` | First-run detection. |
+| SK-33 | `First_Load_Date` | now | `ArmoryQt.py:2750` | Timestamp of first run. |
+| SK-34 | `IgnoreAlerts` | "" | `ArmoryQt.py:248, 1979` | Comma list of ignored Bitcoin alert IDs. |
+| SK-35 | `KeybdOSD` | False | `qtdialogs.py:119` | Show on-screen keyboard in unlock dialog by default. |
+| SK-36 | `LastBlkRecv` | 0 | `ArmoryQt.py:5167`, 6243 | Height of last block received. |
+| SK-37 | `LastBlkRecvTime` | 0 | `ArmoryQt.py:5168`, 6242 | Time last block received (dashboard ETA). |
+| SK-38 | `LastDirectory` | ARMORY_HOME_DIR | `ArmoryQt.py:2868-2942`; `qtdialogs.py:10869` | Last file-dialog directory. |
+| SK-39 | `LastFilterState` | 0 | `ArmoryQt.py:308,3384` | Last ledger filter index (4 = custom). |
+| SK-40 | `LastVersionLoad` | `v<version>` | `ArmoryQt.py:115-120` | Detect first run after upgrade. |
+| SK-41 | `LedgDisplayFee` | — | `qtdialogs.py:9349` (commented) | Dead. |
+| SK-42 | `Load_Count` | 0 | `ArmoryQt.py:2739,2755`; `qtdialogs.py:1819` | Launch counter mod 100 (backup reminder every 5, donate every 20). |
+| SK-43 | `LockboxAddrCols` | '' | `ui/MultiSigDialogs.py:797,1817` | Lockbox table widths. |
+| SK-44 | `LockboxGeometry` | '' | `ui/MultiSigDialogs.py:796,1816` | Lockbox Manager geometry. |
+| SK-45 | `LockboxLedgerCols` | '' | `ui/MultiSigDialogs.py:798,1818` | Lockbox ledger widths. |
+| SK-46 | `MainGeometry` | '' | `ArmoryQt.py:802, 6758` | Main window geometry. |
+| SK-47 | `MainLedgerCols` | '' | `ArmoryQt.py:804, 6760` | Main ledger widths. |
+| SK-48 | `MainWalletCols` | '' | `ArmoryQt.py:805, 6759` | Wallet list widths. |
+| SK-49 | `ManageSatoshi` | `not OS_MACOSX` | `ArmoryQt.py:243`; `qtdialogs.py:8718,9311` | Auto-manage bitcoind. |
+| SK-50 | `MinimizeOnOpen` | False | `ArmoryQt.py:828`; `qtdialogs.py:8950,9347` | Start minimized to tray (ignored when launched with a URI). |
+| SK-51 | `MinimizeOrClose` | 'DontKnow' | `ArmoryQt.py:6671`; `qtdialogs.py:8955,9343` | 'Minimize' / 'Close' / ask. |
+| SK-52 | `MonthlyID` | '0000_00000000' | `ArmoryQt.py:1882` | `mmyy_<8 hex>` anonymous ID rotated monthly for announcement stats. |
+| SK-53 | `NotifyBlkFinish` | True | `ArmoryQt.py:3156` | Show "Blockchain Loaded!" popup. |
+| SK-54 | `NotifyBtcIn` | True (`not OS_MACOSX` at `ArmoryQt.py:6195`) | `qtdialogs.py:8988,9350`; `ArmoryUtils.py:3029` | Tray notify on receive. |
+| SK-55 | `NotifyBtcOut` | True (`not OS_MACOSX` at 6197) | `qtdialogs.py:8989,9351` | Tray notify on send. |
+| SK-56 | `NotifyDiscon` | True | `ArmoryQt.py:2569`; `qtdialogs.py:8990,9352` | Tray notify on bitcoind disconnect. |
+| SK-57 | `NotifyIgnore` | '' | `ArmoryQt.py:2769`; `qtdialogs.py:8907,10410` | Concatenated 8-char IDs of announcements never to pop up again. |
+| SK-58 | `NotifyMinPriority` | 2048 | `ArmoryQt.py:2146,2220`; `qtdialogs.py:8890,9377-9383` | Min announcement priority to pop up. |
+| SK-59 | `NotifyReconn` | True | `ArmoryQt.py:2589`; `qtdialogs.py:8991,9353` | Tray notify on reconnect. |
+| SK-60 | `PayReqestGeometry` (sic) | '' | `qtdialogs.py:10009` | Payment-request dialog geometry. |
+| SK-61 | `PrefEndian` | BIGENDIAN | `qtdialogs.py:3879,5832` | Hash display endianness; no UI. |
+| SK-62 | `SatoshiDatadir` | unset | `ArmoryQt.py:2490-2516`; `qtdialogs.py:8730,9307` | Bitcoin Core home override (CLI `--satoshi-datadir` wins). |
+| SK-63 | `SatoshiExe` | unset | `ArmoryQt.py:2490-2516`; `qtdialogs.py:8726,9291,10908` | Bitcoin install directory to search for bitcoind. |
+| SK-64 | `ScrambleDefault` | 0 | `qtdialogs.py:100` | Default on-screen keyboard layout (0 regular, 1 simple scramble, 2 dynamic). |
+| SK-65 | `SendBtcGeometry` | '' | `qtdialogs.py:5081` | Send dialog geometry. |
+| SK-66 | `SkipAnnounceCheck` | False | `ArmoryQt.py:1864` | Disable announcement fetcher (no UI). |
+| SK-67 | `SkipOnlineCheck` | False | `ArmoryQt.py:2321`; `qtdialogs.py:8780,9312` | Skip internet probe. |
+| SK-68 | `SkipStatsReport` | False | `ArmoryQt.py:1859`; `qtdialogs.py:8797,9357` | Privacy: no OS/version stats. |
+| SK-69 | `SkipVersionCheck` | False | `qtdialogs.py:8785` | Read by dialog only; dormant. |
+| SK-70 | `SyncSuccessCount` | 0 | `ArmoryQt.py:3153`; `qtdialogs.py:2514` | Successful syncs (capped at 10); <1 triggers receive warning. |
+| SK-71 | `UnlockTimeout` | 10 | `ArmoryQt.py:2741` | Created, unused. |
+| SK-72 | `UseTorSettings` | False | `ArmoryQt.py:1868,2322`; `qtdialogs.py:8798,9358` | Tor/proxy mode. |
+| SK-73 | `User_Mode` | 'Advanced' | `ArmoryQt.py:604,2740,1809`; `qtdialogs.py:9333` | Standard / Advanced / Expert. |
+| SK-74 | `WltPropAddrCols` | '' | `qtdialogs.py:1871` | Wallet Properties address-table widths. |
+| SK-75 | `WltPropGeometry` | '' | `qtdialogs.py:1870` | Wallet Properties geometry. |
+
+### 10.4 Per-wallet settings keys (`Wallet_<WalletID>_<Prop>`, `getWltSetting`/`setWltSetting` `ArmoryQt.py:2946-2962`)
+
+| ID | Prop | Default | Where | Meaning |
+|---|---|---|---|---|
+| SW-01 | `LedgerShow` | True unless wallet is watch-only-not-mine | `ArmoryQt.py:2839`, `changeWltFilter` 895, `execClickRow` 3417 | Include wallet in main ledger. |
+| SW-02 | `IsMine` | '' (falsy) | `ArmoryQt.py:2965`; `qtdefines.py:247`; `qtdialogs.py:2305,2431,2438` | WO wallet is mine (→ "Offline" type). |
+| SW-03 | `BelongsTo` | '' | `qtdialogs.py:2309,2432,2439` | Owner name of someone else's wallet. |
+| SW-04 | `ChangeBehavior` | '' (→ NewAddr) | `ui/TxFrames.py:374,903,924,928` | `NewAddr` / `Feedback` / `Specify` (Expert). |
+| SW-05 | `ChangeAddr` | '' | `ui/TxFrames.py:375,926` | Remembered specific change address. |
+| SW-06 | `DNAA_RemindBackup` | '' | `qtdialogs.py:1814,1821` | Suppress backup reminder for this wallet. |
+| SW-07 | `DNAA_RecvOther` | False | `qtdialogs.py:2532-2558` | Suppress "this wallet belongs to someone else" warning on receive. |
