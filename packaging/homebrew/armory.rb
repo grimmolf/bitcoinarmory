@@ -1,7 +1,7 @@
 # Homebrew formula for the Rust rebuild of Armory.
 #   brew install --build-from-source ./packaging/homebrew/armory.rb
-# For a tap: copy to <tap>/Formula/armory.rb and fill in sha256 of the release tarball
-# (`shasum -a 256 bitcoinarmory-0.1.0.tar.gz`).
+# For a tap: copy to <tap>/Formula/armory.rb. The release workflow's job summary prints the url and
+# sha256 for each tag; the all-zero sha256 below is a placeholder until v0.1.0 is tagged.
 class Armory < Formula
   desc "Bitcoin wallet for cold storage, paper backups and multisig (CLI and TUI)"
   homepage "https://github.com/grimmolf/bitcoinarmory"

@@ -1,0 +1,72 @@
+name: release
+
+# Tag v*: build, publish a GitHub Release. rust-rebuild + paths: dry run (never publishes;
+# workflow_dispatch is not registered for workflows that exist only on a non-default branch).
+on:
+  push:
+    tags: ["v*"]
+    branches: [rust-rebuild]
+    paths: [".github/workflows/release.yml", "packaging/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-15-intel] # x86_64 Linux, arm64 macOS, x86_64 macOS
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tag must match the crate version
+        if: github.ref_type == 'tag'
+        run: test "$GITHUB_REF_NAME" = "v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+      - run: packaging/dist.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: target/dist/*.tar.gz
+          if-no-files-found: error
+
+  checksums:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - run: cd dist && sha256sum *.tar.gz | tee SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: checksums
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+      - name: Homebrew sha256 (paste into packaging/homebrew/armory.rb)
+        run: |
+          url=https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$GITHUB_REF_NAME.tar.gz
+          sum=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)
+          printf 'Homebrew formula for %s:\n\n    url "%s"\n    sha256 "%s"\n' "$GITHUB_REF_NAME" "$url" "$sum" | tee -a "$GITHUB_STEP_SUMMARY"
