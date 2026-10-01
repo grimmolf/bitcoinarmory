@@ -38,10 +38,9 @@ jobs:
       - run: diff <(tools/legacy-oracle/build/harness) tools/legacy-oracle/expected-output.txt
 
   regtest:
-    # End-to-end against a real bitcoind (crates/armory/tests/regtest.rs). Non-blocking until it
-    # has run green once; it is the only test of the online paths against Core itself.
+    # End-to-end against a real bitcoind (crates/armory/tests/regtest.rs): the only test of the
+    # online paths against Core itself.
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       CORE_VERSION: "29.1"
     steps:
@@ -56,3 +55,4 @@ jobs:
           tar xzf $f
           echo "ARMORY_BITCOIND=$PWD/bitcoin-${CORE_VERSION}/bin/bitcoind" >> "$GITHUB_ENV"
       - run: cargo test -p armory --test regtest --release --locked -- --nocapture
+      - run: cargo test -p armory --bin armory --release --locked regtest -- --nocapture

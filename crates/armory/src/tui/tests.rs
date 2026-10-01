@@ -208,3 +208,114 @@ fn helpers() {
     assert_eq!(screens::btc(-12_345), "-0.00012345");
     assert_eq!(Tab::from_digit('0'), Some(Tab::Settings));
 }
+
+/// The TUI's own payment flow against a real `bitcoind -regtest` (skipped unless `ARMORY_BITCOIND`
+/// names one, as in tests/regtest.rs): sync, receive, then send through the dialogs (form, review,
+/// passphrase).
+#[test]
+fn regtest_send_through_the_dialogs() {
+    use armory_node::{Auth, RpcClient};
+    use serde_json::json;
+    let Some(bitcoind) = std::env::var_os("ARMORY_BITCOIND") else {
+        eprintln!("skipping: set ARMORY_BITCOIND to a bitcoind binary to run this test");
+        return;
+    };
+    let free_port = || std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let core_dir = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let mut child = std::process::Command::new(bitcoind)
+        .arg("-regtest")
+        .arg(format!("-datadir={}", core_dir.path().display()))
+        .arg(format!("-rpcport={port}"))
+        .arg(format!("-port={}", free_port()))
+        .args(["-server", "-listen=0", "-fallbackfee=0.0002", "-printtoconsole=0"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("start bitcoind");
+    let rpc =
+        RpcClient::new(format!("127.0.0.1:{port}"), Auth::Cookie(core_dir.path().join("regtest/.cookie")));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while rpc.call(None, "getblockchaininfo", json!([])).is_err() {
+        assert!(Instant::now() < deadline, "bitcoind did not start");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let run = || {
+        rpc.call(None, "createwallet", json!(["miner"])).unwrap();
+        let miner =
+            rpc.call(Some("miner"), "getnewaddress", json!([])).unwrap().as_str().unwrap().to_string();
+        rpc.call(None, "generatetoaddress", json!([101, miner])).unwrap();
+
+        let (_d, mut app) = setup();
+        app.node.rpc_addr = Some(format!("127.0.0.1:{port}"));
+        app.node.rpc_cookie = None;
+        app.node.bitcoin_datadir = Some(core_dir.path().into());
+        app.node_status = None;
+        app.refresh();
+        wait(&mut app);
+        assert!(
+            matches!(app.node_status, Some(Ok(_))),
+            "{:?}",
+            app.node_status.as_ref().map(|s| s.as_ref().err())
+        );
+
+        // Sync (Overview → s → default rescan).
+        key(&mut app, KeyCode::Char('s'));
+        submit(&mut app);
+        wait(&mut app);
+        assert!(app.modals.is_empty(), "{}", top_view(&app));
+
+        // Receive 1 BTC.
+        key(&mut app, KeyCode::Char('3'));
+        key(&mut app, KeyCode::Char('n'));
+        wait(&mut app);
+        let addr = app.wallet().unwrap().address(0, 0, 0).unwrap().to_string();
+        rpc.call(Some("miner"), "sendtoaddress", json!([addr, 1.0])).unwrap();
+        rpc.call(None, "generatetoaddress", json!([1, miner])).unwrap();
+        key(&mut app, KeyCode::Char('r'));
+        wait(&mut app);
+        assert_eq!(
+            app.wallet_data().and_then(|d| d.balances.clone()).map(|b| b.confirmed),
+            Some(100_000_000)
+        );
+
+        // Pay 0.3 BTC at 2 sat/vB.
+        key(&mut app, KeyCode::Char('4'));
+        key(&mut app, KeyCode::Char('n'));
+        typ(&mut app, &format!("{miner}=0.3"));
+        for _ in 0..3 {
+            key(&mut app, KeyCode::Tab);
+        }
+        typ(&mut app, "2");
+        submit(&mut app);
+        wait(&mut app);
+        assert!(
+            top_view(&app).starts_with("confirm:") && top_view(&app).contains("0.30000000"),
+            "{}",
+            top_view(&app)
+        );
+        key(&mut app, KeyCode::Char('y'));
+        assert!(top_view(&app).contains("Passphrase for"), "{}", top_view(&app));
+        typ(&mut app, "pw");
+        submit(&mut app);
+        wait(&mut app);
+        let sent = top_view(&app);
+        assert!(sent.starts_with("Broadcast "), "{sent}");
+        let txid = sent.trim_start_matches("Broadcast ").trim().to_string();
+        let mempool = rpc.call(None, "getrawmempool", json!([])).unwrap();
+        assert!(mempool.as_array().unwrap().iter().any(|t| t.as_str() == Some(txid.as_str())), "{mempool}");
+        key(&mut app, KeyCode::Esc);
+
+        // History shows it, with the address book entry recorded.
+        key(&mut app, KeyCode::Char('5'));
+        assert!(render(&app).contains(&txid[..20]));
+        assert!(app.screens.book.iter().any(|e| e.address == miner));
+    };
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+    let _ = rpc.call(None, "stop", json!([]));
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = child.kill();
+    let _ = child.wait();
+    if let Err(e) = r {
+        std::panic::resume_unwind(e);
+    }
+}
