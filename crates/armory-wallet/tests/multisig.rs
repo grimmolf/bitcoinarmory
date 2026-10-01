@@ -73,6 +73,19 @@ fn modern_2_of_3_lockbox_spend() {
     assert_eq!(ws[2].sign_psbt(&ws[2].unlock(None).unwrap(), &mut c, 10).unwrap(), 1);
     a.combine(c).unwrap();
     assert_eq!(sign::summarize(&a, Network::Regtest, &|_| false).signature_status, vec!["complete"]);
+    // A cosigner's bad signature is caught, not broadcast.
+    let mut forged = a.clone();
+    let (pk, sig) = forged.inputs[0].partial_sigs.iter().next().map(|(k, s)| (*k, *s)).unwrap();
+    let other = bitcoin::ecdsa::Signature {
+        signature: secp.sign_ecdsa(
+            &bitcoin::secp256k1::Message::from_digest([7; 32]),
+            &bitcoin::secp256k1::SecretKey::from_slice(&[1; 32]).unwrap(),
+        ),
+        sighash_type: sig.sighash_type,
+    };
+    forged.inputs[0].partial_sigs.insert(pk, other);
+    let e = sign::finalize(&mut forged).unwrap_err().to_string();
+    assert!(e.contains("invalid"), "{e}");
     sign::finalize(&mut a).unwrap();
     let tx = a.extract_tx().unwrap();
     let wit = tx.input[0].witness.to_vec();
@@ -125,6 +138,12 @@ fn armory_093_lockbox_spend() {
     }
     let mut merged = copies.remove(0);
     merged.combine(copies.remove(0)).unwrap();
+    let mut forged = merged.clone();
+    let pk = *forged.inputs[0].partial_sigs.keys().next().unwrap();
+    let mut sig = forged.inputs[0].partial_sigs[&pk];
+    sig.sighash_type = bitcoin::sighash::EcdsaSighashType::None; // signed as ALL: no longer valid
+    forged.inputs[0].partial_sigs.insert(pk, sig);
+    assert!(sign::finalize(&mut forged).unwrap_err().to_string().contains("invalid"));
     sign::finalize(&mut merged).unwrap();
     let tx = merged.extract_tx().unwrap();
     let parts: Vec<Vec<u8>> = tx.input[0]

@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use zeroize::Zeroizing;
 
 use super::Setup;
-use super::app::App;
+use super::app::{App, GLOBAL_KEYS};
 use super::screens::{self, Tab};
 use super::widgets::Modal;
 use crate::cli_node::NodeArgs;
@@ -212,13 +212,18 @@ fn every_advertised_key_does_something() {
         ('2', "cRImsepAdDkSXExL"),
         ('3', "na\nlyu"),
         ('4', "nu\nbd"),
-        ('5', "v\ncfxe"),
-        ('6', "oprsbcmv"),
+        ('5', "v\nycfxe"),
+        ('6', "ophsbcmv"),
         ('7', "nkiesabup"),
         ('8', "pdftTRF"),
         ('9', "svbkidul"),
         ('0', "ncta"),
     ];
+    for (_, keys) in screens {
+        for k in keys.chars() {
+            assert!(!GLOBAL_KEYS.contains(&k), "{k:?} is a global key: the screen can never receive it");
+        }
+    }
     for (tab, keys) in screens {
         for k in keys.chars() {
             key(&mut app, KeyCode::Char(tab));
@@ -233,6 +238,15 @@ fn every_advertised_key_does_something() {
             app.modals.clear();
             app.screens.coins = false;
         }
+    }
+    // Coins view: Space marks, s pays from the marked coins (both report "no coins" here).
+    key(&mut app, KeyCode::Char('5'));
+    key(&mut app, KeyCode::Char('v'));
+    for k in [' ', 's'] {
+        let before = app.modals.len();
+        key(&mut app, KeyCode::Char(k));
+        assert_eq!(app.modals.len(), before + 1, "coins: key {k:?}");
+        app.modals.clear();
     }
 }
 

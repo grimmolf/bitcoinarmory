@@ -82,7 +82,7 @@ the wallet files and Bitcoin Core directly.
 | `addressbook list` / `add` / `remove` | Send: table / `b` / `d` |
 | `balance` / `history [--csv]` / `utxos` | Overview, History (5): table / `e` / `v` |
 | `tx comment` / `bump-fee` / `abandon` | History: `c` / `f` / `x` |
-| `tx show` / `sign` / `broadcast [--raw]` / `convert` / `combine` | Offline (6): `o` or `p` / `s` / `b`, `r` / `c` / `m` |
+| `tx show` / `sign` / `broadcast [--raw]` / `convert` / `combine` | Offline (6): `o` or `p` / `s` / `b`, `h` / `c` / `m` |
 | `lockbox export-key` / `create` / `import` / `export` | Lockboxes (7): `k` / `n` / `i` / `e` |
 | `lockbox list` / `show` / `address` / `sync` / `balance` / `utxos` / `spend` | Lockboxes: list / details / `a` / `s` / `b` / `u` / `p` |
 | `backup paper` / `fragments` / `file` | Backup (8): `p` / `f` / `d` |

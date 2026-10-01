@@ -381,7 +381,7 @@ key exercised, a payment through the dialogs against regtest Core). Every delive
 | Sending | SD-01/02, 03, 04 (`--from-utxo`, TUI coin marking), 06, 07, 08, 09, 12 (`lockbox:ID`), 13, RBF bump, abandon | SD-05 change options (a new change address every time is the modern default) |
 | Offline | OS-01, 03, 04, 05 (files), 06 (everything but sync/broadcast works without a node) | — |
 | Backups | BK-01/02 (TUI Backup screen), 03 (text), 04, 05 (`backup file`), 06, 07, 08, 09, 11 (`restore … --test`) | BK-03 PDF/HTML layouts; BK-10 watch-only from root data (import the watching-only file instead) |
-| Lockboxes | MS-01..11, 15, 16; SegWit `wsh(sortedmulti)` lockboxes | MS-12..14 simulfunding / promissory notes (rarely used; the fixtures stay for a later port); MS-17 per-lockbox ledger (balance and coins are shown) |
+| Lockboxes | MS-01..11 (every cosigner signature is verified before finalizing), 15, 16; SegWit `wsh(sortedmulti)` lockboxes | MS-12..14 simulfunding / promissory notes (rarely used; the fixtures stay for a later port); MS-17 per-lockbox ledger (balance and coins are shown) |
 | Messages | SG-01..05, BIP322 | — |
 | Tools | TL-01, 04 (`tx broadcast --raw`), 10 (OSC 52 copy in the TUI) | TL-02 log export and MI-16 logging (no log yet); TL-03 EC calculator; TL-11 explorer links |
 | Node | ND-03/04/05, 06, 09 (verification progress), 10 (30 s polling), 11, 12 (`--rescan-from`), 14 (`config unset`), 18/19, 21 (status-line notice), 22 (warns below 29), 24, 25 | ND-01 service templates |

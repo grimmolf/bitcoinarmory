@@ -151,9 +151,35 @@ fn hex_decode(s: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-/// Finalize P2WPKH, P2PKH and P2TR key-path inputs that carry their signatures.
+/// Check a cosigner's signature on multisig input `i` (P2WSH or P2SH) against its sighash.
+fn multisig_sig_valid(
+    tx: &bitcoin::Transaction,
+    i: usize,
+    segwit: bool,
+    script: &ScriptBuf,
+    amount: bitcoin::Amount,
+    pk: &bitcoin::PublicKey,
+    sig: &bitcoin::ecdsa::Signature,
+) -> bool {
+    use bitcoin::hashes::Hash;
+    let mut cache = bitcoin::sighash::SighashCache::new(tx);
+    let digest = if segwit {
+        cache.p2wsh_signature_hash(i, script, amount, sig.sighash_type).ok().map(|h| h.to_byte_array())
+    } else {
+        cache.legacy_signature_hash(i, script, sig.sighash_type.to_u32()).ok().map(|h| h.to_byte_array())
+    };
+    let Some(digest) = digest else { return false };
+    Secp256k1::verification_only()
+        .verify_ecdsa(&secp256k1::Message::from_digest(digest), &sig.signature, &pk.inner)
+        .is_ok()
+}
+
+/// Finalize P2WPKH, P2PKH and P2TR key-path inputs that carry their signatures, and multisig
+/// (P2WSH / P2SH) inputs once enough cosigners signed. Every multisig signature is verified first:
+/// a bad signature from a cosigner is reported, never broadcast.
 /// Returns an error naming the first input that cannot be finalized.
 pub fn finalize(psbt: &mut Psbt) -> Result<()> {
+    let tx = psbt.unsigned_tx.clone();
     for i in 0..psbt.inputs.len() {
         let out = prevout(psbt, i)
             .ok_or_else(|| ModernError::Invalid(format!("input {i}: previous output unknown")))?;
@@ -175,6 +201,11 @@ pub fn finalize(psbt: &mut Psbt) -> Result<()> {
             for k in &keys {
                 if let Ok(pk) = bitcoin::PublicKey::from_slice(k) {
                     if let Some(sig) = inp.partial_sigs.get(&pk) {
+                        if !multisig_sig_valid(&tx, i, spk.is_p2wsh(), &script, out.value, &pk, sig) {
+                            return Err(ModernError::Invalid(format!(
+                                "input {i}: the signature of key {pk} is invalid"
+                            )));
+                        }
                         sigs.push(sig.to_vec());
                     }
                 }

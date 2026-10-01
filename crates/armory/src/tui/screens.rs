@@ -252,7 +252,7 @@ fn keys_hint(t: Tab) -> &'static str {
         Tab::History => {
             "v transactions/coins  Enter details  y copy  c comment  f bump fee  x abandon  e CSV"
         }
-        Tab::Offline => "o open  p paste  s sign  b broadcast  r raw  c convert  m combine  v save as",
+        Tab::Offline => "o open  p paste  s sign  b broadcast  h raw hex  c convert  m combine  v save as",
         Tab::Lockboxes => "n create  k my key  i import  e export  s sync  a address  b balance  p spend",
         Tab::Backup => "p paper  f fragments  d file copy  t/T test  R/F restore",
         Tab::Tools => "s sign  v verify  b verify block  k sweep key  i key info  d decode  u URI  l legacy",
@@ -279,7 +279,7 @@ pub fn help(t: Tab) -> String {
             "History\n  v      switch between transactions and coins (UTXOs)\n  Space  (coins) mark a coin;  s  pay from the marked coins (coin control)\n  y      copy the transaction ID\n  ↑↓     select\n  Enter  details\n  c      comment on a transaction\n  f      raise the fee of an unconfirmed transaction (RBF)\n  x      abandon an unconfirmed transaction\n  e      export the history as CSV"
         }
         Tab::Offline => {
-            "Offline transactions (PSBT, and Armory 0.93 TXSIGCOLLECT files)\n  o  open a file          p  paste a transaction and save it\n  s  sign with the selected wallet (works without a node)\n  b  broadcast (finalizes first)      r  broadcast a raw transaction (hex)\n  c  convert PSBT <-> Armory 0.93 format\n  m  combine signatures from several files (multisig)\n  v  save the loaded transaction as a PSBT file"
+            "Offline transactions (PSBT, and Armory 0.93 TXSIGCOLLECT files)\n  o  open a file          p  paste a transaction and save it\n  s  sign with the selected wallet (works without a node)\n  b  broadcast (finalizes first)      h  broadcast a raw transaction (hex)\n  c  convert PSBT <-> Armory 0.93 format\n  m  combine signatures from several files (multisig)\n  v  save the loaded transaction as a PSBT file"
         }
         Tab::Lockboxes => {
             "Lockboxes (multisig)\n  ↑↓  select\n  k   export the selected wallet's cosigner key\n  n   create an M-of-N lockbox from cosigner keys\n  i   import a lockbox file, multisigs.txt or LOCKBOX block\n  e   export the lockbox file for the cosigners\n  s   sync with Bitcoin Core    a  next deposit address\n  b   balance                   u  coins\n  p   build a spend (PSBT) for the cosigners to sign on the Offline screen"
@@ -298,6 +298,8 @@ pub fn help(t: Tab) -> String {
 }
 
 pub fn on_key(app: &mut App, k: KeyEvent) -> Result<()> {
+    // Global keys are handled by App before a screen sees anything.
+    debug_assert!(!matches!(k.code, KeyCode::Char(c) if super::app::GLOBAL_KEYS.contains(&c)));
     match app.tab {
         Tab::Overview => overview_key(app, k),
         Tab::Wallets => wallets_key(app, k),
@@ -1552,7 +1554,7 @@ fn offline_key(app: &mut App, k: KeyEvent) -> Result<()> {
     let loaded = app.screens.offline.as_ref().map(|o| o.path.clone());
     let need = || loaded.clone().ok_or_else(|| anyhow!("open a transaction first (o)"));
     match k.code {
-        KeyCode::Char('r') => app.push_form(Form::new(
+        KeyCode::Char('h') => app.push_form(Form::new(
             "Broadcast a raw transaction",
             vec![multi("Signed transaction (hex)")],
             |app, v| {

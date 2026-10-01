@@ -520,6 +520,10 @@ impl App {
     }
 }
 
+/// Keys handled before the screen sees them (screens must not advertise these).
+pub const GLOBAL_KEYS: &[char] =
+    &['q', 'r', 'w', 'W', '[', ']', '?', ':', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
 pub fn net_name(n: Network) -> &'static str {
     match n {
         Network::Mainnet => "mainnet",
