@@ -692,6 +692,71 @@ impl ModernWallet {
         Fingerprint::from_str(&self.id).map_err(invalid)
     }
 
+    /// Where an address of this wallet lives: `(account, branch, index)`, searching handed-out
+    /// addresses plus `gap` more on each branch. Imported legacy keys return index `u32::MAX`.
+    pub fn find_address(&self, address: &Address, gap: u32) -> Option<(usize, u32, u32)> {
+        let spk = address.script_pubkey();
+        for (i, a) in self.accounts.iter().enumerate() {
+            let branches: &[(u32, u32)] = if a.kind == AccountKind::Legacy135 {
+                &[(0, a.next_receive)]
+            } else {
+                &[(0, a.next_receive), (1, a.next_change)]
+            };
+            for (b, n) in branches {
+                for idx in 0..n + gap {
+                    if self.address(i, *b, idx).is_ok_and(|x| x.script_pubkey() == spk) {
+                        return Some((i, *b, idx));
+                    }
+                }
+            }
+            if let Some(l) = &a.legacy {
+                for h in &l.imported_hash160 {
+                    let addr =
+                        legacy_network(self.network).p2pkh_address(&hex::decode(h).ok()?.try_into().ok()?);
+                    if addr == address.to_string() {
+                        return Some((i, 0, u32::MAX));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Private key of one of this wallet's addresses. The flag is true for compressed keys
+    /// (BIP32 accounts) and false for legacy-1.35 keys (uncompressed).
+    pub fn key_for_address(
+        &self,
+        unlocked: &Unlocked,
+        address: &Address,
+        gap: u32,
+    ) -> Result<(bitcoin::secp256k1::SecretKey, bool)> {
+        let (acct, branch, idx) =
+            self.find_address(address, gap).ok_or_else(|| invalid("address is not in this wallet"))?;
+        let a = &self.accounts[acct];
+        let sk = match a.kind {
+            AccountKind::Legacy135 if idx == u32::MAX => {
+                let h = hex::encode(address.script_pubkey().as_bytes()[3..23].to_vec());
+                let k =
+                    unlocked.secrets.imported_keys.get(&h).ok_or_else(|| invalid("missing imported key"))?;
+                bitcoin::secp256k1::SecretKey::from_slice(&hex::decode(k).map_err(invalid)?)
+                    .map_err(invalid)?
+            }
+            AccountKind::Legacy135 => {
+                let k = self.legacy_private_key(unlocked, acct, idx)?;
+                bitcoin::secp256k1::SecretKey::from_slice(&k[..]).map_err(invalid)?
+            }
+            _ => {
+                let secp = Secp256k1::new();
+                let path = DerivationPath::from_str(
+                    &format!("{}/{branch}/{idx}", a.path.clone().unwrap_or_default()).replace('h', "'"),
+                )
+                .map_err(invalid)?;
+                unlocked.master.derive_priv(&secp, &path).map_err(invalid)?.private_key
+            }
+        };
+        Ok((sk, a.kind != AccountKind::Legacy135))
+    }
+
     // ------------------------------------------------------------- migration
 
     /// Add a legacy v1.35 wallet as a `legacy-1.35` account. `legacy_key` is the v1.35 AES key

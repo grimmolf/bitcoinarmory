@@ -146,6 +146,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "armory-crypto",
+ "base64 0.22.1",
  "bip39",
  "bitcoin",
  "chacha20poly1305",

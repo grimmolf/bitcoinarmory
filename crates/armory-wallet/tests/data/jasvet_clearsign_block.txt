@@ -1,0 +1,15 @@
+-----BEGIN BITCOIN SIGNED MESSAGE-----
+Comment: Signed by Bitcoin Armory v0.92.3
+
+changelog    https://s3.amazonaws.com/bitcoinarmory-media/changelog.txt            21669c17b620503c05580053595dbedda1a9c2146b3fda89122e24444a45dc6b
+bootstrap    https://s3.amazonaws.com/bitcoinarmory-media/bootstrap.dat.torrent    b62c08932668ce162d51226135940724e90f4c71704ac936f74cc153b34cc251
+downloads    https://s3.amazonaws.com/bitcoinarmory-media/dllinks.txt              6c50e8c8d8bf9800cf532d4b20bf49da7c13436189f6c1b02fa8b28b38829b83
+notify       https://s3.amazonaws.com/bitcoinarmory-media/notify.txt               eba491396ce1d9667177a6e298ae3485c1db35d10d84f89ec9cd882bac2faa9a
+
+-----BEGIN BITCOIN SIGNATURE-----
+
+
+G/8M14BRD6GU96y6o1x+9xSfoWBdzZp8p1e/vAZ857D4l9+ozM08CTnzqsxkv1GA
+NssNh1MEmtqgrgEfSPRX5gU=
+=AnjN
+-----END BITCOIN SIGNATURE-----

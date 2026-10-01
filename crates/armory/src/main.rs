@@ -2,6 +2,7 @@
 
 mod app;
 mod cli_backup;
+mod cli_message;
 mod cli_modern;
 mod cli_node;
 mod cli_tx;
@@ -71,6 +72,9 @@ enum Command {
     /// The Bitcoin Core node.
     #[command(subcommand)]
     Node(cli_node::NodeCmd),
+    /// Sign and verify messages (BIP137, BIP322, Armory signed blocks).
+    #[command(subcommand)]
+    Message(cli_message::MessageCmd),
     /// Paper, SecurePrint and fragmented backups.
     #[command(subcommand)]
     Backup(cli_backup::BackupCmd),
@@ -212,6 +216,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Utxos { id, min_conf } => cli_node::utxos(&ctx, &cli.node, json, &id, min_conf),
         Command::Node(cmd) => cli_node::node(&ctx, &cli.node, json, cmd),
         Command::Address(cmd) => cli_modern::address(&ctx, json, cmd),
+        Command::Message(cmd) => cli_message::message(&ctx, json, cmd),
         Command::Backup(cmd) => cli_backup::backup(&ctx, json, cmd),
         Command::Restore(cmd) => cli_backup::restore(&ctx, json, cmd),
         Command::Legacy(LegacyCmd::Wallet(cmd)) => wallet(&ctx, json, cmd),

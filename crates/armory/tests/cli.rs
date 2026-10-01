@@ -518,3 +518,91 @@ fn offline_psbt_show_and_sign() {
     assert_eq!(tx.input[0].witness.len(), 2);
     assert!(env.ok(&["--network", "regtest", "tx", "show", s(&file)]).contains("signed:  1/1"));
 }
+
+#[test]
+fn message_sign_verify_all_formats() {
+    let env = Env::new();
+    let o = env.run(
+        &["--network", "mainnet", "wallet", "restore", "--no-encrypt", "--taproot"],
+        Some(&format!("{ABANDON}\n")),
+    );
+    assert!(o.status.success());
+    env.ok(&[
+        "--network",
+        "mainnet",
+        "wallet",
+        "migrate",
+        s(&fixture("encrypted/FakeWallet123.wallet")),
+        "--into",
+        "73c5da0a",
+        "--legacy-passphrase-file",
+        s(&env.file("lp", "FakeWallet123\n")),
+    ]);
+    let seg = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu";
+    let tr = "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr";
+    let legacy =
+        env.ok(&["--network", "mainnet", "address", "new", "73c5da0a", "--account", "2"]).trim().to_string();
+    for (addr, fmt) in [(seg, "auto"), (seg, "bip137"), (tr, "auto"), (legacy.as_str(), "auto")] {
+        let sig = env.ok(&[
+            "--network",
+            "mainnet",
+            "message",
+            "sign",
+            addr,
+            "--message",
+            "hi there",
+            "--format",
+            fmt,
+        ]);
+        let out = env.ok(&[
+            "--network",
+            "mainnet",
+            "message",
+            "verify",
+            "--address",
+            addr,
+            "--signature",
+            sig.trim(),
+            "--message",
+            "hi there",
+        ]);
+        assert!(out.starts_with("VALID"), "{addr} {fmt}: {out}");
+        let bad = env.run(
+            &[
+                "--network",
+                "mainnet",
+                "message",
+                "verify",
+                "--address",
+                addr,
+                "--signature",
+                sig.trim(),
+                "--message",
+                "hi there!",
+            ],
+            None,
+        );
+        assert!(!bad.status.success());
+    }
+    let block = env.ok(&[
+        "--network",
+        "mainnet",
+        "message",
+        "sign",
+        &legacy,
+        "--message",
+        "Armory 0.93 style",
+        "--format",
+        "clearsign",
+    ]);
+    let f = env.file("block.txt", &block);
+    let out = env.ok(&["--network", "mainnet", "message", "verify", "--block", s(&f), "--address", &legacy]);
+    assert!(out.starts_with("VALID"), "{out}");
+    // The Armory 0.93 test-suite block.
+    let old = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../armory-wallet/tests/data/jasvet_clearsign_block.txt");
+    assert!(
+        env.ok(&["--network", "mainnet", "message", "verify", "--block", s(&old)])
+            .contains("1NWvhByxfTXPYNT4zMBmEY3VL8QJQtQoei")
+    );
+}

@@ -14,7 +14,7 @@ authors = ["Armory contributors"]
 armory-crypto = { path = "crates/armory-crypto" }
 armory-wallet = { path = "crates/armory-wallet" }
 armory-node = { path = "crates/armory-node" }
-bitcoin = { version = "0.32", default-features = false, features = ["std", "rand-std", "serde", "base64"] }
+bitcoin = { version = "0.32", default-features = false, features = ["std", "rand-std", "serde", "base64", "secp-recovery"] }
 aes = "0.8"
 num-bigint = "0.4"
 num-traits = "0.2"

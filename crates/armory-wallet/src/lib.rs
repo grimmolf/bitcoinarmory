@@ -8,6 +8,7 @@ pub mod descriptor;
 pub mod error;
 pub mod keytext;
 pub mod legacy;
+pub mod message;
 pub mod modern;
 pub mod network;
 pub mod record;
