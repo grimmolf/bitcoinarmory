@@ -33,6 +33,8 @@ pub enum WalletCmd {
         #[arg(long, default_value = "")]
         description: String,
     },
+    /// Let Bitcoin Core watch this wallet (imports its descriptors; rescans from the birthday).
+    Sync(crate::cli_node::SyncArgs),
     /// Set, change or remove the encryption passphrase.
     Passphrase {
         id: String,
@@ -421,6 +423,7 @@ pub fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
             print(json, &view(&path, &nw.wallet), |v| format!("Restored wallet {}.\n{}", v.id, view_text(v)));
         }
         WalletCmd::Migrate(a) => migrate(ctx, json, a)?,
+        WalletCmd::Sync(_) => unreachable!("dispatched in main"),
         WalletCmd::Rename { id, label, description } => {
             let (p, mut w) = open(ctx, &id)?;
             w.label = label;

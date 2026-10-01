@@ -98,6 +98,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "armory-crypto",
+ "armory-node",
  "armory-wallet",
  "bitcoin",
  "clap",
@@ -123,6 +124,20 @@ dependencies = [
  "rand 0.8.8",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "armory-node"
+version = "0.1.0"
+dependencies = [
+ "armory-wallet",
+ "base64",
+ "bitcoin",
+ "directories",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -163,6 +178,12 @@ checksum = "365c0acd5b2e8dd0111a46c4faea83fb3cfb6e39a49a7c73a06e090db7b2eff0"
 dependencies = [
  "bitcoin_hashes",
 ]
+
+[[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64ct"

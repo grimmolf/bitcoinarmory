@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 armory-crypto.workspace = true
 armory-wallet.workspace = true
+armory-node.workspace = true
 bitcoin.workspace = true
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }

@@ -3,6 +3,7 @@
 mod app;
 mod cli_backup;
 mod cli_modern;
+mod cli_node;
 mod context;
 
 use std::path::PathBuf;
@@ -30,6 +31,8 @@ struct Cli {
     /// Machine-readable JSON output.
     #[arg(long, global = true)]
     json: bool,
+    #[command(flatten)]
+    node: cli_node::NodeArgs,
     #[command(subcommand)]
     command: Command,
 }
@@ -42,6 +45,26 @@ enum Command {
     /// Receive addresses and labels.
     #[command(subcommand)]
     Address(cli_modern::AddressCmd),
+    /// Balance of a wallet (from Bitcoin Core; run `wallet sync` first).
+    Balance { id: String },
+    /// Transaction history (newest first).
+    History {
+        id: String,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Write the history as CSV to this file.
+        #[arg(long)]
+        csv: Option<PathBuf>,
+    },
+    /// Unspent outputs (coins) of a wallet.
+    Utxos {
+        id: String,
+        #[arg(long, default_value_t = 0)]
+        min_conf: u32,
+    },
+    /// The Bitcoin Core node.
+    #[command(subcommand)]
+    Node(cli_node::NodeCmd),
     /// Paper, SecurePrint and fragmented backups.
     #[command(subcommand)]
     Backup(cli_backup::BackupCmd),
@@ -171,7 +194,12 @@ fn run(cli: Cli) -> Result<()> {
     let ctx = Context::new(cli.network, cli.datadir, cli.passphrase_file)?;
     let json = cli.json;
     match cli.command {
+        Command::Wallet(cli_modern::WalletCmd::Sync(a)) => cli_node::sync(&ctx, &cli.node, json, a),
         Command::Wallet(cmd) => cli_modern::wallet(&ctx, json, cmd),
+        Command::Balance { id } => cli_node::balance(&ctx, &cli.node, json, &id),
+        Command::History { id, limit, csv } => cli_node::history(&ctx, &cli.node, json, &id, limit, csv),
+        Command::Utxos { id, min_conf } => cli_node::utxos(&ctx, &cli.node, json, &id, min_conf),
+        Command::Node(cmd) => cli_node::node(&ctx, &cli.node, json, cmd),
         Command::Address(cmd) => cli_modern::address(&ctx, json, cmd),
         Command::Backup(cmd) => cli_backup::backup(&ctx, json, cmd),
         Command::Restore(cmd) => cli_backup::restore(&ctx, json, cmd),

@@ -210,6 +210,10 @@ pub struct ModernWallet {
     #[serde(default)]
     pub description: String,
     pub created: u64,
+    /// Earliest time (unix seconds) the wallet can have received funds; 0 = unknown (restored or
+    /// migrated wallets), which makes a backend rescan from the genesis block.
+    #[serde(default)]
+    pub birthday: u64,
     pub accounts: Vec<Account>,
     /// Address -> label.
     #[serde(default)]
@@ -320,7 +324,10 @@ impl ModernWallet {
             mix.zeroize();
             entropy.copy_from_slice(&h[..len]);
         }
-        Self::from_entropy(network, label, &entropy, bip39_passphrase, encryption, now)
+        let mut nw = Self::from_entropy(network, label, &entropy, bip39_passphrase, encryption, now)?;
+        // A brand-new seed cannot have history; allow two hours for clock skew.
+        nw.wallet.birthday = now.saturating_sub(7200);
+        Ok(nw)
     }
 
     /// Restore from a mnemonic.
@@ -369,6 +376,7 @@ impl ModernWallet {
             label: label.into(),
             description: String::new(),
             created: now,
+            birthday: 0,
             accounts: Vec::new(),
             address_labels: BTreeMap::new(),
             tx_comments: BTreeMap::new(),

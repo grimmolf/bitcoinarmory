@@ -13,6 +13,7 @@ authors = ["Armory contributors"]
 [workspace.dependencies]
 armory-crypto = { path = "crates/armory-crypto" }
 armory-wallet = { path = "crates/armory-wallet" }
+armory-node = { path = "crates/armory-node" }
 bitcoin = { version = "0.32", default-features = false, features = ["std", "rand-std", "serde"] }
 aes = "0.8"
 num-bigint = "0.4"

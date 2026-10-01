@@ -7,6 +7,7 @@ The Rust rebuild of Armory for Fedora Linux and macOS. Design and status:
 |---|---|
 | `armory-crypto` | Byte-exact legacy primitives: Armory HMAC, checksums, Easy16, ROMix KDF, AES, 1.35 key chain, Shamir, SecurePrint |
 | `armory-wallet` | Modern v2 wallets (BIP39/BIP32, BIP84 SegWit + BIP86 Taproot accounts, descriptors, Argon2id + XChaCha20-Poly1305) and legacy v1.35 `.wallet` files (byte-compatible read/write, migration) |
+| `armory-node` | Bitcoin Core JSON-RPC backend: watch-only descriptor wallets, balances, history, UTXOs, fees, broadcast |
 | `armory` | The `armory` command-line program (TUI to follow) |
 
 ## Build and test
@@ -36,6 +37,19 @@ Without `--datadir`, wallets (`<id>.armory`) live in `~/.local/share/armory/<net
 `~/Library/Application Support/Armory/<network>/wallets` (macOS). Wallet files are created with mode 0600 and
 world-readable wallets are refused.
 
+## Using Bitcoin Core
+
+Run Bitcoin Core 29 or newer (`server=1`). Armory uses cookie authentication from the Bitcoin data
+directory by default (`--bitcoin-datadir`, `--rpc-cookie`, `--rpc-addr` override it) and creates one watch-only
+wallet `armory-<id>` per Armory wallet:
+
+```sh
+armory node status
+armory wallet sync <ID>        # imports descriptors; rescans from the wallet birthday
+armory balance <ID>
+armory history <ID> --csv history.csv
+```
+
 ## Status
 
 | Milestone | State |
@@ -44,7 +58,7 @@ world-readable wallets are refused.
 | M1 legacy v1.35 wallets (`armory legacy …`) | done |
 | M1b modern wallets: BIP39/BIP84/BIP86, encryption, migration, descriptors | done |
 | M2 paper / SecurePrint / fragmented backups (create, restore, `--test`; Armory 0.93 sheets and fragments restore) | done |
-| M3 Bitcoin Core backend | not started |
+| M3 Bitcoin Core backend (`node status`, `wallet sync`, `balance`, `history --csv`, `utxos`) | done against a mock Core RPC server; not yet run against a real regtest node |
 | M4 spending (PSBT / USTX) | not started |
 | M5 lockboxes, messages | not started |
 | M6 TUI | not started |

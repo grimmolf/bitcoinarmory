@@ -451,3 +451,17 @@ fn full_sheet_covers_migrated_legacy_wallet() {
             .starts_with("PASS")
     );
 }
+
+#[test]
+fn node_errors_are_clear() {
+    let env = Env::new();
+    let o = env.run(&["node", "status", "--rpc-cookie", "/nonexistent/.cookie"], None);
+    assert!(!o.status.success());
+    let e = String::from_utf8_lossy(&o.stderr);
+    assert!(e.contains("cookie") && e.contains("bitcoind running"), "{e}");
+    let o = env.run(
+        &["node", "status", "--rpc-addr", "127.0.0.1:1", "--rpc-user", "u", "--rpc-password", "p"],
+        None,
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("cannot connect to Bitcoin Core"));
+}
