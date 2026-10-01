@@ -196,6 +196,9 @@ pub(crate) fn summary_text(s: &PsbtSummary) -> String {
         s.inputs,
         if s.rbf { ", replaceable (RBF)" } else { "" }
     ));
+    for (i, ty) in &s.odd_sighash {
+        t.push_str(&format!("\n  WARNING: input {i} requests sighash type {ty:#04x}, not ALL"));
+    }
     if s.signature_status.iter().any(|x| x.contains(" of ")) {
         t.push_str(&format!("\n  status:  {}", s.signature_status.join(", ")));
     }

@@ -8,6 +8,7 @@ use bitcoin::key::{PrivateKey, Secp256k1};
 use bitcoin::psbt::{GetKey, GetKeyError, KeyRequest, Psbt};
 use bitcoin::script::{Builder, PushBytesBuf};
 use bitcoin::secp256k1::{self, Signing};
+use bitcoin::sighash::{EcdsaSighashType, TapSighashType};
 use bitcoin::{Address, Network, ScriptBuf, TxOut, Witness};
 
 use crate::modern::{AccountKind, ModernError, ModernWallet, Result, Unlocked};
@@ -49,11 +50,24 @@ fn legacy_source() -> KeySource {
 
 fn prevout(psbt: &Psbt, i: usize) -> Option<TxOut> {
     let inp = &psbt.inputs[i];
+    // A witness_utxo is only trustworthy for SegWit: legacy sighashes do not commit to the amount.
     if let Some(u) = &inp.witness_utxo {
-        return Some(u.clone());
+        return u.script_pubkey.is_witness_program().then(|| u.clone());
     }
     let op = psbt.unsigned_tx.input[i].previous_output;
-    inp.non_witness_utxo.as_ref().and_then(|t| t.output.get(op.vout as usize).cloned())
+    let t = inp.non_witness_utxo.as_ref().filter(|t| t.compute_txid() == op.txid)?;
+    t.output.get(op.vout as usize).cloned()
+}
+
+/// The PSBT-supplied sighash type of input `i` when it is not the wallet's default (ALL).
+fn odd_sighash(psbt: &Psbt, i: usize) -> Option<u32> {
+    let t = psbt.inputs[i].sighash_type?;
+    let ok = if prevout(psbt, i).is_some_and(|o| o.script_pubkey.is_p2tr()) {
+        matches!(t.taproot_hash_ty(), Ok(TapSighashType::All | TapSighashType::Default))
+    } else {
+        matches!(t.ecdsa_hash_ty(), Ok(EcdsaSighashType::All))
+    };
+    (!ok).then(|| t.to_u32())
 }
 
 /// Summary of a PSBT for review before signing or broadcasting.
@@ -69,6 +83,8 @@ pub struct PsbtSummary {
     /// Per input: "complete", "unsigned" or "k of m" for multisig.
     pub signature_status: Vec<String>,
     pub rbf: bool,
+    /// Inputs carrying a sighash type other than ALL: (input index, type). Refused by `check_psbt`.
+    pub odd_sighash: Vec<(usize, u32)>,
 }
 
 impl ModernWallet {
@@ -129,6 +145,10 @@ impl ModernWallet {
     pub fn sign_psbt(&self, unlocked: &Unlocked, psbt: &mut Psbt, legacy_gap: u32) -> Result<usize> {
         let keys = self.signing_keys(unlocked, legacy_gap)?;
         self.annotate_legacy_inputs(psbt, &keys);
+        // Sign only with the wallet's own default (ALL); never with a type the PSBT asks for.
+        for inp in &mut psbt.inputs {
+            inp.sighash_type = None;
+        }
         let secp = Secp256k1::new();
         let used = match psbt.sign(&keys, &secp) {
             Ok(u) => u,
@@ -202,6 +222,12 @@ pub fn finalize(psbt: &mut Psbt) -> Result<()> {
                 if let Ok(pk) = bitcoin::PublicKey::from_slice(k)
                     && let Some(sig) = inp.partial_sigs.get(&pk)
                 {
+                    if sig.sighash_type != EcdsaSighashType::All {
+                        return Err(ModernError::Invalid(format!(
+                            "input {i}: the signature of key {pk} uses sighash type {}, not ALL",
+                            sig.sighash_type
+                        )));
+                    }
                     if !multisig_sig_valid(&tx, i, spk.is_p2wsh(), &script, out.value, &pk, sig) {
                         return Err(ModernError::Invalid(format!(
                             "input {i}: the signature of key {pk} is invalid"
@@ -295,7 +321,12 @@ pub fn check_psbt(psbt: &Psbt, own: &dyn Fn(&ScriptBuf) -> bool, expected: &Expe
         if !own(&out.script_pubkey) {
             return bad(format!("input {i} does not belong to this wallet"));
         }
-        input_total += out.value.to_sat();
+        if let Some(t) = odd_sighash(psbt, i) {
+            return bad(format!("input {i} asks for sighash type {t:#04x}; only ALL is signed"));
+        }
+        input_total = input_total
+            .checked_add(out.value.to_sat())
+            .ok_or_else(|| ModernError::Invalid("input amounts overflow".into()))?;
     }
     let mut unmatched: Vec<(ScriptBuf, u64)> = expected.payments.clone();
     let mut sweep_amount = None;
@@ -330,7 +361,7 @@ pub fn summarize(psbt: &Psbt, network: Network, mine: &dyn Fn(&ScriptBuf) -> boo
     let mut total = Some(0u64);
     for i in 0..psbt.inputs.len() {
         total = match (total, prevout(psbt, i)) {
-            (Some(t), Some(o)) => Some(t + o.value.to_sat()),
+            (Some(t), Some(o)) => t.checked_add(o.value.to_sat()),
             _ => None,
         };
     }
@@ -382,22 +413,24 @@ pub fn summarize(psbt: &Psbt, network: Network, mine: &dyn Fn(&ScriptBuf) -> boo
     // multisig from its script.
     let mut vsize = 11 + psbt.unsigned_tx.output.iter().map(|o| 9 + o.script_pubkey.len()).sum::<usize>();
     for i in 0..psbt.inputs.len() {
-        let ms = psbt.inputs[i]
-            .witness_script
-            .as_ref()
-            .map(|s| (s, true))
-            .or(psbt.inputs[i].redeem_script.as_ref().map(|s| (s, false)))
-            .and_then(|(s, w)| {
-                crate::lockbox::script_keys(s.as_bytes()).ok().map(|(m, _)| (s.len(), usize::from(m), w))
-            });
-        vsize += match prevout(psbt, i).map(|o| o.script_pubkey) {
-            _ if ms.is_some() => {
-                let (len, m, witness) = ms.unwrap();
+        let inp = &psbt.inputs[i];
+        let spk = prevout(psbt, i).map(|o| o.script_pubkey);
+        // Only P2WSH / P2SH prevouts consult a PSBT-supplied script; it cannot resize other inputs.
+        let ms = match &spk {
+            Some(s) if s.is_p2wsh() => inp.witness_script.as_ref().map(|x| (x, true)),
+            Some(s) if s.is_p2sh() => inp.redeem_script.as_ref().map(|x| (x, false)),
+            _ => None,
+        }
+        .and_then(|(s, w)| {
+            crate::lockbox::script_keys(s.as_bytes()).ok().map(|(m, _)| (s.len(), usize::from(m), w))
+        });
+        vsize += match (ms, spk) {
+            (Some((len, m, witness)), _) => {
                 let data = 1 + m * 73 + len + 3;
                 if witness { 41 + data.div_ceil(4) } else { 41 + data }
             }
-            Some(s) if s.is_p2tr() => 58,
-            Some(s) if s.is_p2pkh() => 180,
+            (_, Some(s)) if s.is_p2tr() => 58,
+            (_, Some(s)) if s.is_p2pkh() => 180,
             _ => 68,
         };
     }
@@ -411,6 +444,7 @@ pub fn summarize(psbt: &Psbt, network: Network, mine: &dyn Fn(&ScriptBuf) -> boo
         signed_inputs: signed,
         signature_status: status,
         rbf: psbt.unsigned_tx.input.iter().any(|i| i.sequence.is_rbf()),
+        odd_sighash: (0..psbt.inputs.len()).filter_map(|i| odd_sighash(psbt, i).map(|t| (i, t))).collect(),
     }
 }
 
@@ -505,6 +539,48 @@ mod tests {
         evil.unsigned_tx.output[0].script_pubkey = dest;
         evil.outputs[0] = Default::default();
         assert!(check_psbt(&evil, &own, &ok).is_err());
+
+        // D1: a PSBT-chosen sighash type is refused, and never signed with when unchecked.
+        let mut odd = psbt.clone();
+        odd.inputs[0].sighash_type = Some(EcdsaSighashType::None.into());
+        assert!(check_psbt(&odd, &own, &ok).unwrap_err().to_string().contains("input 0"));
+        assert_eq!(summarize(&odd, Network::Testnet, &|_| false).odd_sighash.len(), 1);
+        let mut odd_tr = psbt.clone();
+        odd_tr.inputs[1].sighash_type = Some(TapSighashType::None.into());
+        assert!(check_psbt(&odd_tr, &own, &ok).unwrap_err().to_string().contains("input 1"));
+        odd.inputs[1].sighash_type = Some(TapSighashType::None.into());
+        w.sign_psbt(&u, &mut odd, 5).unwrap();
+        finalize(&mut odd).unwrap();
+        let otx = odd.extract_tx().unwrap();
+        let osig = bitcoin::ecdsa::Signature::from_slice(&otx.input[0].witness.to_vec()[0]).unwrap();
+        assert_eq!(osig.sighash_type, EcdsaSighashType::All);
+        let otsig = bitcoin::taproot::Signature::from_slice(&otx.input[1].witness.to_vec()[0]).unwrap();
+        assert_eq!(otsig.sighash_type, TapSighashType::Default);
+
+        // D2: legacy amounts need a matching previous transaction, and no witness_utxo.
+        let mut wrong_tx = psbt.clone();
+        let mut other = funding.clone();
+        other.lock_time = absolute::LockTime::from_height(1).unwrap();
+        wrong_tx.inputs[2].non_witness_utxo = Some(other);
+        assert!(check_psbt(&wrong_tx, &own, &ok).is_err());
+        let mut legacy_wu = psbt.clone();
+        legacy_wu.inputs[2].non_witness_utxo = None;
+        legacy_wu.inputs[2].witness_utxo = Some(funding.output[2].clone());
+        assert!(check_psbt(&legacy_wu, &own, &ok).is_err());
+
+        // D4: a PSBT-supplied script does not resize a P2WPKH input.
+        let vs = summarize(&psbt, Network::Testnet, &|_| false).vsize_estimate;
+        let mut fat = psbt.clone();
+        let mut b = Builder::new().push_opcode(bitcoin::opcodes::all::OP_PUSHNUM_15);
+        for _ in 0..15 {
+            b = b.push_key(&bitcoin::PublicKey::new(k84));
+        }
+        fat.inputs[0].witness_script = Some(
+            b.push_opcode(bitcoin::opcodes::all::OP_PUSHNUM_15)
+                .push_opcode(bitcoin::opcodes::all::OP_CHECKMULTISIG)
+                .into_script(),
+        );
+        assert_eq!(summarize(&fat, Network::Testnet, &|_| false).vsize_estimate, vs);
 
         assert_eq!(w.sign_psbt(&u, &mut psbt, 5).unwrap(), 3);
         let summary = summarize(&psbt, Network::Testnet, &|_| false);

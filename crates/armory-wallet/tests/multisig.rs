@@ -141,9 +141,9 @@ fn armory_093_lockbox_spend() {
     let mut forged = merged.clone();
     let pk = *forged.inputs[0].partial_sigs.keys().next().unwrap();
     let mut sig = forged.inputs[0].partial_sigs[&pk];
-    sig.sighash_type = bitcoin::sighash::EcdsaSighashType::None; // signed as ALL: no longer valid
+    sig.sighash_type = bitcoin::sighash::EcdsaSighashType::None; // signed as ALL; refused for not being ALL
     forged.inputs[0].partial_sigs.insert(pk, sig);
-    assert!(sign::finalize(&mut forged).unwrap_err().to_string().contains("invalid"));
+    assert!(sign::finalize(&mut forged).unwrap_err().to_string().contains("not ALL"));
     sign::finalize(&mut merged).unwrap();
     let tx = merged.extract_tx().unwrap();
     let parts: Vec<Vec<u8>> = tx.input[0]
