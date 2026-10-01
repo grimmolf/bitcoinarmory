@@ -110,7 +110,7 @@ pub fn sync(ctx: &Context, node: &NodeArgs, json: bool, a: SyncArgs) -> Result<(
         _ => Rescan::Birthday,
     };
     if matches!(rescan, Rescan::Birthday) && w.birthday == 0 {
-        eprintln!(
+        noteln!(
             "Rescanning from the genesis block (the wallet's creation date is unknown); this can take a while."
         );
     }
@@ -172,7 +172,7 @@ pub fn history(
             ));
         }
         armory_wallet::store::atomic_write(&path, out.as_bytes())?;
-        eprintln!("Wrote {} transactions to {}.", h.len(), path.display());
+        noteln!("Wrote {} transactions to {}.", h.len(), path.display());
         return Ok(());
     }
     print(json, &h, |h| {

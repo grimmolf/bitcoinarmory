@@ -1,6 +1,6 @@
 //! Global options: network, data directory and passphrase input.
 
-use std::io::{BufRead, IsTerminal};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
@@ -84,18 +84,13 @@ impl Context {
             let s = std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
             return Ok(Zeroizing::new(s.trim_end_matches(['\r', '\n']).to_string()));
         }
-        if std::io::stdin().is_terminal() {
-            return Ok(Zeroizing::new(rpassword::prompt_password(prompt)?));
-        }
-        let mut line = String::new();
-        std::io::stdin().lock().read_line(&mut line)?;
-        Ok(Zeroizing::new(line.trim_end_matches(['\r', '\n']).to_string()))
+        crate::io::secret(prompt)
     }
 
     /// A new passphrase, asked twice on a terminal.
     pub fn new_passphrase(&self) -> Result<Zeroizing<String>> {
         let p = self.passphrase("New passphrase: ")?;
-        if self.passphrase_file.is_none() && std::io::stdin().is_terminal() {
+        if self.passphrase_file.is_none() && !crate::io::captured() && std::io::stdin().is_terminal() {
             let again = self.passphrase("Repeat passphrase: ")?;
             if *again != *p {
                 bail!("passphrases do not match");
@@ -108,14 +103,9 @@ impl Context {
     }
 }
 
-/// Read one secret line: hidden prompt on a terminal, otherwise one line of stdin.
+/// Read one secret line (see [`crate::io::secret`]).
 pub fn read_secret(prompt: &str) -> Result<Zeroizing<String>> {
-    if std::io::stdin().is_terminal() {
-        return Ok(Zeroizing::new(rpassword::prompt_password(prompt)?));
-    }
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
-    Ok(Zeroizing::new(line.trim_end_matches(['\r', '\n']).to_string()))
+    crate::io::secret(prompt)
 }
 
 pub fn create_private_dir(d: &Path) -> Result<()> {

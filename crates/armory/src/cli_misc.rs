@@ -302,7 +302,7 @@ pub fn sweep_key(
         let dest = w.next_receive(0)?;
         let tx = sweep::sweep(&key, &coins, &dest, rate)?;
         let total: u64 = coins.iter().map(|c| c.value).sum();
-        eprintln!(
+        noteln!(
             "Sweeping {} coin(s), {} BTC, to {dest} (fee {} sat).",
             coins.len(),
             Amount::from_sat(total).to_string_in(Denomination::Bitcoin),

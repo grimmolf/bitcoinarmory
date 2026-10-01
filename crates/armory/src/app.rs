@@ -76,7 +76,7 @@ pub fn list_wallets(ctx: &Context) -> Result<Vec<WalletFile>> {
         match WalletFile::open_read_only(&p) {
             Ok(f) if f.wallet.network == ctx.network.legacy() => out.push(f),
             Ok(_) => {}
-            Err(e) => eprintln!("warning: skipping {}: {e}", p.display()),
+            Err(e) => noteln!("warning: skipping {}: {e}", p.display()),
         }
     }
     Ok(out)

@@ -72,7 +72,7 @@ pub enum LockboxCmd {
     },
 }
 
-fn lockboxes(ctx: &Context) -> Result<Vec<(PathBuf, Lockbox)>> {
+pub(crate) fn lockboxes(ctx: &Context) -> Result<Vec<(PathBuf, Lockbox)>> {
     let mut out = Vec::new();
     let dir = ctx.wallet_dir()?;
     for e in std::fs::read_dir(&dir)? {
@@ -81,7 +81,7 @@ fn lockboxes(ctx: &Context) -> Result<Vec<(PathBuf, Lockbox)>> {
             match Lockbox::from_json(&std::fs::read(&p)?) {
                 Ok(lb) if lb.network == ctx.network.bitcoin() => out.push((p, lb)),
                 Ok(_) => {}
-                Err(e) => eprintln!("warning: skipping {}: {e}", p.display()),
+                Err(e) => noteln!("warning: skipping {}: {e}", p.display()),
             }
         }
     }
@@ -208,7 +208,7 @@ pub fn lockbox(ctx: &Context, node: &NodeArgs, json: bool, cmd: LockboxCmd) -> R
                 for l in &legacy {
                     let lb = Lockbox::from_legacy(l, net);
                     if open(ctx, &lb.id).is_ok() {
-                        eprintln!("lockbox {} already present; skipped", lb.id);
+                        noteln!("lockbox {} already present; skipped", lb.id);
                         continue;
                     }
                     store(ctx, &lb)?;

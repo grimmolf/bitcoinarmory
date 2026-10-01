@@ -3,11 +3,10 @@
 //! Bitcoin Core (watch-only wallet) selects coins and builds a PSBT; Armory reviews it, signs it
 //! with the wallet's keys (optionally on an offline machine) and finalizes it locally.
 
-use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use armory_node::core::Core;
 use armory_wallet::sign::{self, PsbtSummary};
 use armory_wallet::ustx::Ustx;
@@ -194,20 +193,7 @@ pub(crate) fn summary_text(s: &PsbtSummary) -> String {
 }
 
 pub(crate) fn confirm(yes: bool, question: &str) -> Result<()> {
-    if yes {
-        return Ok(());
-    }
-    if !std::io::stdin().is_terminal() {
-        bail!("refusing to send without confirmation; pass --yes");
-    }
-    eprint!("{question} [y/N] ");
-    let mut l = String::new();
-    std::io::stdin().lock().read_line(&mut l)?;
-    if l.trim().eq_ignore_ascii_case("y") || l.trim().eq_ignore_ascii_case("yes") {
-        Ok(())
-    } else {
-        bail!("cancelled")
-    }
+    crate::io::confirm(yes, question)
 }
 
 /// Write the unsigned PSBT, or show it, confirm, unlock, sign and broadcast.
@@ -226,7 +212,7 @@ fn complete(
         });
         return Ok(());
     }
-    eprintln!("{}", summary_text(&p.summary));
+    noteln!("{}", summary_text(&p.summary));
     confirm(yes, "Sign and broadcast this transaction?")?;
     let pass = if p.wallet.is_encrypted() {
         Some(ctx.passphrase(&format!("Passphrase for wallet {}: ", p.wallet.id))?)
@@ -290,7 +276,7 @@ pub fn tx(ctx: &Context, node: &NodeArgs, json: bool, cmd: TxCmd) -> Result<()> 
             let (_, w) = m::open(ctx, &wallet)?;
             let (mut psbt, was_ustx) = read_tx_file(&file, ctx.network.bitcoin())?;
             let scripts = ops::own_scripts(&w);
-            eprintln!("{}", summary_text(&sign::summarize(&psbt, w.network, &|x| scripts.contains(x))));
+            noteln!("{}", summary_text(&sign::summarize(&psbt, w.network, &|x| scripts.contains(x))));
             let pass = if w.is_encrypted() {
                 Some(ctx.passphrase(&format!("Passphrase for wallet {}: ", w.id))?)
             } else {

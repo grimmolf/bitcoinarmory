@@ -66,7 +66,7 @@ pub enum MessageCmd {
         signature: Option<String>,
         #[command(flatten)]
         input: MessageInput,
-        /// An Armory "BITCOIN SIGNED MESSAGE" / "BITCOIN MESSAGE" block file.
+        /// An Armory "BITCOIN SIGNED MESSAGE" / "BITCOIN MESSAGE" block file (`-`: standard input).
         #[arg(long, conflicts_with_all = ["signature", "message", "file"])]
         block: Option<PathBuf>,
     },
@@ -124,7 +124,11 @@ pub fn message(ctx: &Context, json: bool, cmd: MessageCmd) -> Result<()> {
         }
         MessageCmd::Verify { address, signature, input, block } => {
             if let Some(b) = block {
-                let text = std::fs::read_to_string(&b).with_context(|| format!("reading {}", b.display()))?;
+                let text = if b.as_os_str() == "-" {
+                    crate::io::read_all("signed block")?
+                } else {
+                    std::fs::read_to_string(&b).with_context(|| format!("reading {}", b.display()))?
+                };
                 let (sig, msg) = message::read_block(&text)?;
                 let p2pkh = if net == bitcoin::Network::Bitcoin { 0x00 } else { 0x6f };
                 let signer = message::recovered_p2pkh(&sig, msg.as_bytes(), p2pkh)?;

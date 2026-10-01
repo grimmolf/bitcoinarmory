@@ -203,7 +203,7 @@ pub(crate) fn wallets(ctx: &Context) -> Result<Vec<(PathBuf, ModernWallet)>> {
         match ModernWallet::load(&p) {
             Ok(w) if w.network == ctx.network.bitcoin() => out.push((p, w)),
             Ok(_) => {}
-            Err(e) => eprintln!("warning: skipping {}: {e}", p.display()),
+            Err(e) => noteln!("warning: skipping {}: {e}", p.display()),
         }
     }
     Ok(out)
@@ -342,7 +342,7 @@ pub(crate) struct Created {
 
 pub(crate) fn show_mnemonic(json: bool, c: &Created) {
     print(json, c, |c| {
-        eprintln!(
+        noteln!(
             "\nWrite these words down on paper and keep them safe. Anyone with them can spend your funds;\nwithout them (and the passphrase) a lost wallet file cannot be recovered."
         );
         format!("{}\n\nRecovery phrase:\n{}", view_text(&c.wallet), numbered(&c.mnemonic))
@@ -487,7 +487,7 @@ pub fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
                 out.extend(d);
             }
             if private {
-                eprintln!("WARNING: these descriptors contain private keys.");
+                noteln!("WARNING: these descriptors contain private keys.");
             }
             print(json, &out, |o| o.join("\n"));
         }
@@ -538,7 +538,7 @@ pub fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
                     }
                 }
             }
-            eprintln!("WARNING: anyone who sees these keys can spend the funds of these addresses.");
+            noteln!("WARNING: anyone who sees these keys can spend the funds of these addresses.");
             print(json, &rows, |r| {
                 r.iter()
                     .map(|x| {
@@ -652,7 +652,7 @@ fn migrate(ctx: &Context, json: bool, a: MigrateArgs) -> Result<()> {
             format!("Legacy wallet {} added as account [{acct}].\n{}", legacy.id(), view_text(v))
         }),
     }
-    eprintln!(
+    noteln!(
         "The original file of legacy wallet {} was not changed. Its funds stay on its addresses until you sweep them.",
         legacy.id()
     );

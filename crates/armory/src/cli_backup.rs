@@ -1,6 +1,6 @@
 //! `armory backup` and `armory restore`: paper, SecurePrint and fragmented backups.
 
-use std::io::{IsTerminal, Read};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -107,20 +107,15 @@ fn read_input(file: &Option<PathBuf>, what: &str) -> Result<String> {
     if let Some(f) = file {
         return std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()));
     }
-    if std::io::stdin().is_terminal() {
-        eprintln!("Type or paste the {what}; finish with Ctrl-D on an empty line.");
-    }
-    let mut s = String::new();
-    std::io::stdin().read_to_string(&mut s)?;
-    Ok(s)
+    crate::io::read_all(what)
 }
 
 fn read_code(common: &RestoreCommon) -> Result<Zeroizing<String>> {
     if let Some(f) = &common.code_file {
         return Ok(Zeroizing::new(std::fs::read_to_string(f)?.trim().to_string()));
     }
-    if std::io::stdin().is_terminal() || common.file.is_some() {
-        return Ok(Zeroizing::new(rpassword::prompt_password("SecurePrint code: ")?.trim().to_string()));
+    if crate::io::captured() || std::io::stdin().is_terminal() || common.file.is_some() {
+        return Ok(Zeroizing::new(crate::io::secret("SecurePrint code: ")?.trim().to_string()));
     }
     bail!("the backup is SecurePrint-protected: pass the code with --code-file")
 }
@@ -198,18 +193,18 @@ pub fn backup(ctx: &Context, json: bool, cmd: BackupCmd) -> Result<()> {
             match &output {
                 Some(p) => {
                     armory_wallet::store::atomic_write(p, doc.as_bytes())?;
-                    eprintln!("Paper backup written to {}.", p.display());
+                    noteln!("Paper backup written to {}.", p.display());
                 }
-                None => println!("{doc}"),
+                None => outln!("{doc}"),
             }
             for (what, c) in &codes {
-                eprintln!(
+                noteln!(
                     "SecurePrint code ({what}): {c}   <- write it down separately; it is NOT on the sheet"
                 );
             }
             if json {
                 let v = serde_json::json!({ "wallet": w.id, "secureprint_codes": codes });
-                eprintln!("{v}");
+                noteln!("{v}");
             }
         }
         BackupCmd::Fragments { id, m: need, n, secureprint, output_dir } => {
@@ -218,7 +213,7 @@ pub fn backup(ctx: &Context, json: bool, cmd: BackupCmd) -> Result<()> {
             let fp: [u8; 4] = w.master_fingerprint()?.to_bytes();
             let (frags, code) = backup::modern_fragments(&u.entropy()?, fp, need, n, secureprint)?;
             if !u.secrets.legacy_roots.is_empty() {
-                eprintln!(
+                noteln!(
                     "warning: fragments cover the recovery seed only, not migrated Armory 0.93 accounts; back those up with `armory backup paper` or sweep them."
                 );
             }
@@ -248,11 +243,11 @@ pub fn backup(ctx: &Context, json: bool, cmd: BackupCmd) -> Result<()> {
                         armory_wallet::store::atomic_write(&p, body.as_bytes())?;
                         files.push(p);
                     }
-                    None => println!("{body}\n----------------------------------------- cut here\n"),
+                    None => outln!("{body}\n----------------------------------------- cut here\n"),
                 }
             }
             if let Some(c) = &code {
-                eprintln!(
+                noteln!(
                     "SecurePrint code: {c}   <- needed with any {need} fragments; it is NOT on the fragments"
                 );
             }
@@ -313,7 +308,7 @@ fn restore_modern(
         return finish_test(json, expected, &probe.wallet.id, corrected);
     }
     if corrected > 0 {
-        eprintln!(
+        noteln!(
             "note: {corrected} line(s) had a typo that the checksum corrected; check the wallet ID below."
         );
     }
@@ -341,12 +336,12 @@ fn restore_legacy(ctx: &Context, json: bool, c: &RestoreCommon, r: backup::Legac
         return finish_test(json, expected, &legacy_id, r.corrected_lines);
     }
     if r.corrected_lines > 0 {
-        eprintln!(
+        noteln!(
             "note: {} line(s) had a typo that the checksum corrected; check the wallet ID.",
             r.corrected_lines
         );
     }
-    eprintln!("Restored Armory 0.93 wallet {legacy_id}. Compare this ID with the one printed on the backup.");
+    noteln!("Restored Armory 0.93 wallet {legacy_id}. Compare this ID with the one printed on the backup.");
     let legacy = LegacyWallet::from_root(lnet, &c.label, "", &r.root, Some(r.chaincode), None, 10, m::now())?;
     let (path, mut w, mnemonic, pass, unlocked) = match &c.into {
         Some(id) => {

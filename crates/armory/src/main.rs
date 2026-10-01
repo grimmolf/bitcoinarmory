@@ -1,5 +1,7 @@
 //! `armory`: command-line interface (and, later, the TUI) for Armory wallets.
 
+#[macro_use]
+mod io;
 mod app;
 mod cli_backup;
 mod cli_lockbox;
@@ -11,6 +13,7 @@ mod cli_tx;
 mod config;
 mod context;
 mod ops;
+mod tui;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -46,11 +49,13 @@ struct Cli {
     #[command(flatten)]
     node: cli_node::NodeArgs,
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Full-screen terminal interface (the default when no command is given).
+    Tui,
     /// Create, restore, migrate and manage wallets (BIP39 / BIP84 / BIP86).
     #[command(subcommand)]
     Wallet(cli_modern::WalletCmd),
@@ -233,9 +238,9 @@ enum LegacyAddressCmd {
 
 pub(crate) fn print<T: Serialize>(json: bool, value: &T, text: impl FnOnce(&T) -> String) {
     if json {
-        println!("{}", serde_json::to_string_pretty(value).expect("serializable"));
+        outln!("{}", serde_json::to_string_pretty(value).expect("serializable"));
     } else {
-        println!("{}", text(value));
+        outln!("{}", text(value));
     }
 }
 
@@ -286,6 +291,10 @@ fn config_cmd(datadir: Option<&std::path::Path>, json: bool, cmd: ConfigCmd) -> 
 /// Write to stdout, treating a closed pipe (`| head`) as success.
 fn write_stdout(b: &[u8]) -> Result<()> {
     use std::io::Write;
+    if io::captured() {
+        io::out(&String::from_utf8_lossy(b));
+        return Ok(());
+    }
     match std::io::stdout().write_all(b) {
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         r => Ok(r?),
@@ -293,9 +302,24 @@ fn write_stdout(b: &[u8]) -> Result<()> {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    match &cli.command {
+    let command = match cli.command {
+        None | Some(Command::Tui) => {
+            if io::captured() {
+                anyhow::bail!("the terminal interface is already running");
+            }
+            let ctx = Context::new(cli.network, cli.datadir.clone(), cli.passphrase_file.clone())?;
+            return tui::run(tui::Setup {
+                ctx,
+                node: cli.node,
+                datadir: cli.datadir,
+                passphrase_file: cli.passphrase_file,
+            });
+        }
+        Some(c) => c,
+    };
+    match &command {
         Command::Config(_) | Command::Completions { .. } | Command::Manpage | Command::About => {
-            return match cli.command {
+            return match command {
                 Command::Config(cmd) => config_cmd(cli.datadir.as_deref(), cli.json, cmd),
                 Command::Completions { shell } => {
                     let mut buf = Vec::new();
@@ -308,7 +332,7 @@ fn run(cli: Cli) -> Result<()> {
                     write_stdout(&buf)
                 }
                 _ => {
-                    println!(
+                    outln!(
                         "Armory {} (Rust)\nCopyright (C) 2011-2015 Armory Technologies, Inc.; Rust rebuild by the Armory contributors.\nLicensed under the GNU Affero General Public License v3 or later; see LICENSE.\nNo warranty. This program never contacts any server other than your own Bitcoin Core node.",
                         env!("CARGO_PKG_VERSION")
                     );
@@ -320,7 +344,7 @@ fn run(cli: Cli) -> Result<()> {
     }
     let ctx = Context::new(cli.network, cli.datadir, cli.passphrase_file)?;
     let json = cli.json;
-    match cli.command {
+    match command {
         Command::Wallet(cli_modern::WalletCmd::Sync(a)) => cli_node::sync(&ctx, &cli.node, json, a),
         Command::Wallet(cli_modern::WalletCmd::SweepLegacy(a)) => {
             cli_tx::sweep_legacy(&ctx, &cli.node, json, a)
@@ -334,9 +358,11 @@ fn run(cli: Cli) -> Result<()> {
         Command::Node(cmd) => cli_node::node(&ctx, &cli.node, json, cmd),
         Command::Address(cmd) => cli_modern::address(&ctx, json, cmd),
         Command::Lockbox(cmd) => cli_lockbox::lockbox(&ctx, &cli.node, json, cmd),
-        Command::Config(_) | Command::Completions { .. } | Command::Manpage | Command::About => {
-            unreachable!()
-        }
+        Command::Config(_)
+        | Command::Completions { .. }
+        | Command::Manpage
+        | Command::About
+        | Command::Tui => unreachable!(),
         Command::Addressbook(cmd) => cli_misc::addressbook(&ctx, json, cmd),
         Command::Uri(cmd) => cli_misc::uri(&ctx, json, cmd),
         Command::Sweep { id, fee, yes } => cli_misc::sweep_key(&ctx, &cli.node, json, &id, &fee, yes),
@@ -499,7 +525,7 @@ fn address(ctx: &Context, json: bool, cmd: LegacyAddressCmd) -> Result<()> {
         LegacyAddressCmd::Keys { address } => {
             let (mut f, h) = app::find_address(ctx, &address)?;
             let k = app::export_key(ctx, &mut f, h)?;
-            eprintln!("WARNING: anyone who sees this private key can spend the funds of this address.");
+            noteln!("WARNING: anyone who sees this private key can spend the funds of this address.");
             print(json, &k, |k| {
                 format!(
                     "Address:     {}\nWIF:         {}\nPrivate key: {}\nPublic key:  {}",
@@ -509,7 +535,7 @@ fn address(ctx: &Context, json: bool, cmd: LegacyAddressCmd) -> Result<()> {
         }
         LegacyAddressCmd::ImportKey { id } => {
             let mut f = app::open_wallet(ctx, &id)?;
-            let text = context::read_secret("Private key: ")?;
+            let text = io::secret("Private key: ")?;
             let a = app::import_key(ctx, &mut f, &text)?;
             print(json, &a, |a| format!("Imported {a}."));
         }
@@ -520,6 +546,15 @@ fn address(ctx: &Context, json: bool, cmd: LegacyAddressCmd) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Run a command line (without the program name) the way the TUI does: output captured and
+/// prompts answered from `inputs`.
+pub(crate) fn run_captured(args: &[String], inputs: io::Inputs) -> (Result<()>, zeroize::Zeroizing<String>) {
+    io::capture(inputs, || {
+        let cli = Cli::try_parse_from(std::iter::once("armory".to_string()).chain(args.iter().cloned()))?;
+        run(cli)
+    })
 }
 
 /// Exit codes: 0 ok, 1 error, 2 usage (clap), 3 wrong passphrase, 4 backup test failed.
