@@ -1,3 +1,6 @@
+//! Errors of the legacy v1.35 wallet layer (file parsing, unlocking, chain checks). The modern v2
+//! wallet has its own `modern::ModernError`.
+
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
