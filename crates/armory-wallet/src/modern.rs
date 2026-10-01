@@ -735,7 +735,7 @@ impl ModernWallet {
         let a = &self.accounts[acct];
         let sk = match a.kind {
             AccountKind::Legacy135 if idx == u32::MAX => {
-                let h = hex::encode(address.script_pubkey().as_bytes()[3..23].to_vec());
+                let h = hex::encode(&address.script_pubkey().as_bytes()[3..23]);
                 let k =
                     unlocked.secrets.imported_keys.get(&h).ok_or_else(|| invalid("missing imported key"))?;
                 bitcoin::secp256k1::SecretKey::from_slice(&hex::decode(k).map_err(invalid)?)
