@@ -3,6 +3,7 @@
 //! See `docs/rust-rebuild/specs/01-wallet-format-and-crypto.md` for the byte layout and
 //! `02-backups-and-recovery.md` for paper and fragmented backups.
 
+pub mod backup;
 pub mod descriptor;
 pub mod error;
 pub mod keytext;

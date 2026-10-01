@@ -1,6 +1,7 @@
 //! `armory`: command-line interface (and, later, the TUI) for Armory wallets.
 
 mod app;
+mod cli_backup;
 mod cli_modern;
 mod context;
 
@@ -41,6 +42,12 @@ enum Command {
     /// Receive addresses and labels.
     #[command(subcommand)]
     Address(cli_modern::AddressCmd),
+    /// Paper, SecurePrint and fragmented backups.
+    #[command(subcommand)]
+    Backup(cli_backup::BackupCmd),
+    /// Restore (or test) a paper or fragmented backup, modern or Armory 0.93.
+    #[command(subcommand)]
+    Restore(cli_backup::RestoreCmd),
     /// Armory 0.93 (v1.35) `.wallet` files: inspect, keys, byte-compatible edits.
     #[command(subcommand)]
     Legacy(LegacyCmd),
@@ -166,6 +173,8 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Wallet(cmd) => cli_modern::wallet(&ctx, json, cmd),
         Command::Address(cmd) => cli_modern::address(&ctx, json, cmd),
+        Command::Backup(cmd) => cli_backup::backup(&ctx, json, cmd),
+        Command::Restore(cmd) => cli_backup::restore(&ctx, json, cmd),
         Command::Legacy(LegacyCmd::Wallet(cmd)) => wallet(&ctx, json, cmd),
         Command::Legacy(LegacyCmd::Address(cmd)) => address(&ctx, json, cmd),
     }
@@ -344,7 +353,7 @@ fn address(ctx: &Context, json: bool, cmd: LegacyAddressCmd) -> Result<()> {
     Ok(())
 }
 
-/// Exit codes: 0 ok, 1 error, 2 usage (clap), 3 wrong passphrase.
+/// Exit codes: 0 ok, 1 error, 2 usage (clap), 3 wrong passphrase, 4 backup test failed.
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -358,7 +367,13 @@ fn main() -> ExitCode {
                 e.downcast_ref::<armory_wallet::modern::ModernError>(),
                 Some(armory_wallet::modern::ModernError::WrongPassphrase)
             );
-            if wrong_pass { ExitCode::from(3) } else { ExitCode::FAILURE }
+            if wrong_pass {
+                ExitCode::from(3)
+            } else if e.downcast_ref::<cli_backup::TestFailed>().is_some() {
+                ExitCode::from(4)
+            } else {
+                ExitCode::FAILURE
+            }
         }
     }
 }

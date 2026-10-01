@@ -244,6 +244,9 @@ pub struct NewWallet {
     pub mnemonic: Zeroizing<String>,
 }
 
+/// (v1.35 wallet ID, root private key, chain code).
+pub type LegacyRootSecret = (String, Zeroizing<[u8; 32]>, [u8; 32]);
+
 /// Unlocked secrets.
 pub struct Unlocked {
     pub secrets: Secrets,
@@ -251,6 +254,24 @@ pub struct Unlocked {
 }
 
 impl Unlocked {
+    pub fn entropy(&self) -> Result<Zeroizing<Vec<u8>>> {
+        Ok(Zeroizing::new(hex::decode(&self.secrets.entropy).map_err(invalid)?))
+    }
+
+    /// Migrated legacy roots: (v1.35 wallet ID, root key, chain code).
+    pub fn legacy_roots(&self) -> Result<Vec<LegacyRootSecret>> {
+        self.secrets
+            .legacy_roots
+            .iter()
+            .map(|(id, (r, c))| {
+                let root =
+                    Zeroizing::new(hex::decode(r).map_err(invalid)?.try_into().map_err(|_| invalid("key"))?);
+                let cc = hex::decode(c).map_err(invalid)?.try_into().map_err(|_| invalid("chaincode"))?;
+                Ok((id.clone(), root, cc))
+            })
+            .collect()
+    }
+
     pub fn mnemonic(&self) -> Result<Zeroizing<String>> {
         let entropy = Zeroizing::new(hex::decode(&self.secrets.entropy).map_err(invalid)?);
         let m = bip39::Mnemonic::from_entropy(&entropy).map_err(|e| ModernError::Mnemonic(e.to_string()))?;
@@ -315,6 +336,18 @@ impl ModernWallet {
             .map_err(|e| ModernError::Mnemonic(e.to_string()))?;
         let entropy = Zeroizing::new(m.to_entropy());
         Self::from_entropy(network, label, &entropy, bip39_passphrase, encryption, now)
+    }
+
+    /// Restore from raw BIP39 entropy (a paper or fragment backup).
+    pub fn restore_entropy(
+        network: Network,
+        label: &str,
+        entropy: &[u8],
+        bip39_passphrase: &str,
+        encryption: Option<(&[u8], KdfParams)>,
+        now: u64,
+    ) -> Result<NewWallet> {
+        Self::from_entropy(network, label, entropy, bip39_passphrase, encryption, now)
     }
 
     fn from_entropy(

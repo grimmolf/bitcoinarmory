@@ -93,7 +93,7 @@ pub struct KdfArgs {
 }
 
 impl KdfArgs {
-    fn params(&self) -> KdfParams {
+    pub(crate) fn params(&self) -> KdfParams {
         KdfParams::with_cost(self.kdf_memory_mib.max(1) * 1024, self.kdf_iterations.max(1))
     }
 }
@@ -179,11 +179,11 @@ pub enum AddressCmd {
     Label { address: String, label: String },
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-fn wallets(ctx: &Context) -> Result<Vec<(PathBuf, ModernWallet)>> {
+pub(crate) fn wallets(ctx: &Context) -> Result<Vec<(PathBuf, ModernWallet)>> {
     let mut out = Vec::new();
     for p in modern::discover(&ctx.wallet_dir()?)? {
         match ModernWallet::load(&p) {
@@ -195,7 +195,7 @@ fn wallets(ctx: &Context) -> Result<Vec<(PathBuf, ModernWallet)>> {
     Ok(out)
 }
 
-fn open(ctx: &Context, id: &str) -> Result<(PathBuf, ModernWallet)> {
+pub(crate) fn open(ctx: &Context, id: &str) -> Result<(PathBuf, ModernWallet)> {
     let mut m: Vec<_> = wallets(ctx)?.into_iter().filter(|(_, w)| w.id.starts_with(id)).collect();
     match m.len() {
         0 => bail!(
@@ -207,7 +207,7 @@ fn open(ctx: &Context, id: &str) -> Result<(PathBuf, ModernWallet)> {
     }
 }
 
-fn unlock(ctx: &Context, w: &ModernWallet) -> Result<(Unlocked, Option<Zeroizing<String>>)> {
+pub(crate) fn unlock(ctx: &Context, w: &ModernWallet) -> Result<(Unlocked, Option<Zeroizing<String>>)> {
     if w.is_encrypted() {
         let p = ctx.passphrase(&format!("Passphrase for wallet {}: ", w.id))?;
         let u = w.unlock(Some(p.as_bytes()))?;
@@ -217,11 +217,11 @@ fn unlock(ctx: &Context, w: &ModernWallet) -> Result<(Unlocked, Option<Zeroizing
     }
 }
 
-fn new_protection(ctx: &Context, no_encrypt: bool) -> Result<Option<Zeroizing<String>>> {
+pub(crate) fn new_protection(ctx: &Context, no_encrypt: bool) -> Result<Option<Zeroizing<String>>> {
     if no_encrypt { Ok(None) } else { Ok(Some(ctx.new_passphrase()?)) }
 }
 
-fn bip39_pass(ask: bool) -> Result<Zeroizing<String>> {
+pub(crate) fn bip39_pass(ask: bool) -> Result<Zeroizing<String>> {
     if ask {
         read_secret("BIP39 passphrase (optional 25th word): ")
     } else {
@@ -229,7 +229,7 @@ fn bip39_pass(ask: bool) -> Result<Zeroizing<String>> {
     }
 }
 
-fn store_new(ctx: &Context, w: &ModernWallet) -> Result<PathBuf> {
+pub(crate) fn store_new(ctx: &Context, w: &ModernWallet) -> Result<PathBuf> {
     let path = ctx.wallet_dir()?.join(w.file_name());
     if path.exists() {
         bail!("wallet {} already exists at {}", w.id, path.display());
@@ -251,7 +251,7 @@ struct AccountView {
 }
 
 #[derive(Serialize)]
-struct WalletView {
+pub(crate) struct WalletView {
     id: String,
     label: String,
     description: String,
@@ -262,7 +262,7 @@ struct WalletView {
     path: PathBuf,
 }
 
-fn view(path: &Path, w: &ModernWallet) -> WalletView {
+pub(crate) fn view(path: &Path, w: &ModernWallet) -> WalletView {
     WalletView {
         id: w.id.clone(),
         label: w.label.clone(),
@@ -295,7 +295,7 @@ fn view(path: &Path, w: &ModernWallet) -> WalletView {
     }
 }
 
-fn view_text(v: &WalletView) -> String {
+pub(crate) fn view_text(v: &WalletView) -> String {
     let mut s = format!(
         "Wallet ID:   {}\nName:        {}\nNetwork:     {}\nProtection:  {}\nFile:        {}\nAccounts:",
         v.id,
@@ -320,13 +320,13 @@ fn view_text(v: &WalletView) -> String {
 }
 
 #[derive(Serialize)]
-struct Created {
+pub(crate) struct Created {
     #[serde(flatten)]
-    wallet: WalletView,
-    mnemonic: String,
+    pub(crate) wallet: WalletView,
+    pub(crate) mnemonic: String,
 }
 
-fn show_mnemonic(json: bool, c: &Created) {
+pub(crate) fn show_mnemonic(json: bool, c: &Created) {
     print(json, c, |c| {
         eprintln!(
             "\nWrite these words down on paper and keep them safe. Anyone with them can spend your funds;\nwithout them (and the passphrase) a lost wallet file cannot be recovered."
@@ -335,7 +335,7 @@ fn show_mnemonic(json: bool, c: &Created) {
     });
 }
 
-fn numbered(m: &str) -> String {
+pub(crate) fn numbered(m: &str) -> String {
     m.split(' ')
         .enumerate()
         .map(|(i, w)| format!("{:>2}. {w:<10}", i + 1))
@@ -522,7 +522,7 @@ pub fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
     Ok(())
 }
 
-fn load_legacy(ctx: &Context, which: &str) -> Result<LegacyWallet> {
+pub(crate) fn load_legacy(ctx: &Context, which: &str) -> Result<LegacyWallet> {
     let p = Path::new(which);
     if p.is_file() {
         let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;

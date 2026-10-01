@@ -26,6 +26,9 @@ $A wallet create --label Savings          # prints 24 recovery words; asks for a
 $A address new <ID>                       # tb1q... (never needs the passphrase)
 $A wallet descriptors <ID>                # wpkh([fp/84h/1h/0h]tpub.../0/*)#...
 $A wallet migrate fixtures/legacy/armory_GDHFnMQ2_.wallet --no-encrypt   # Armory 0.93 wallet -> legacy account
+$A backup paper <ID> --secureprint -o sheet.txt   # code shown on screen only
+$A restore paper --file sheet.txt --secureprint --test <ID>   # PASS/FAIL, writes nothing
+$A backup fragments <ID> -m 2 -n 3 --output-dir frags/
 $A legacy wallet show GDHFnMQ2            # v1.35 files stay readable byte-for-byte
 ```
 
@@ -40,7 +43,7 @@ world-readable wallets are refused.
 | M0 primitives | done |
 | M1 legacy v1.35 wallets (`armory legacy …`) | done |
 | M1b modern wallets: BIP39/BIP84/BIP86, encryption, migration, descriptors | done |
-| M2 paper / SecurePrint / fragmented backups | primitives done; CLI next |
+| M2 paper / SecurePrint / fragmented backups (create, restore, `--test`; Armory 0.93 sheets and fragments restore) | done |
 | M3 Bitcoin Core backend | not started |
 | M4 spending (PSBT / USTX) | not started |
 | M5 lockboxes, messages | not started |
