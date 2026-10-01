@@ -194,7 +194,16 @@ impl App {
         let label = if quiet { String::new() } else { label.to_string() };
         std::thread::spawn(move || {
             // Anything a job prints would scribble over the screen: capture (and drop) it.
-            let (result, _) = crate::io::capture(Vec::new(), || job(&ctx, &node));
+            let run = std::panic::AssertUnwindSafe(|| crate::io::capture(Vec::new(), || job(&ctx, &node)).0);
+            // A bug in a job must not take the interface down: report it like any error.
+            let result = std::panic::catch_unwind(run).unwrap_or_else(|p| {
+                let msg = p
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| p.downcast_ref::<String>().cloned())
+                    .unwrap_or_default();
+                Err(anyhow!("internal error (please report): {msg}"))
+            });
             let _ = tx.send(Done { label, result });
         });
     }

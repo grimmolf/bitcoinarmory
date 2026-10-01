@@ -359,3 +359,13 @@ fn regtest_send_through_the_dialogs() {
         std::panic::resume_unwind(e);
     }
 }
+
+#[test]
+fn a_panicking_job_is_reported_not_fatal() {
+    let (_d, mut app) = setup();
+    wait(&mut app);
+    app.spawn("boom", |_, _| panic!("kaboom"));
+    wait(&mut app);
+    assert!(app.busy.is_empty());
+    assert!(top_view(&app).contains("internal error (please report): kaboom"), "{}", top_view(&app));
+}

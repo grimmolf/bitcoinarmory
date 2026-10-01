@@ -34,6 +34,15 @@ pub fn run(setup: Setup) -> Result<()> {
     let mut app = app::App::new(setup);
     // `init` installs a panic hook that restores the terminal before the panic message.
     let mut terminal = ratatui::try_init().context("cannot initialise the terminal")?;
+    // ratatui's hook restores the terminal on panic. Only the UI thread's panics end the program;
+    // a worker's panic is caught and shown as an error, so it must leave the screen alone.
+    let restore_hook = std::panic::take_hook();
+    let ui_thread = std::thread::current().id();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().id() == ui_thread {
+            restore_hook(info);
+        }
+    }));
     let _ = execute!(std::io::stdout(), EnableBracketedPaste);
     let r = main_loop(&mut terminal, &mut app);
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
