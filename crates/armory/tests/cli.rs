@@ -606,3 +606,88 @@ fn message_sign_verify_all_formats() {
             .contains("1NWvhByxfTXPYNT4zMBmEY3VL8QJQtQoei")
     );
 }
+
+#[test]
+fn lockbox_workflow() {
+    use bitcoin::{Amount, OutPoint, Transaction, TxIn, TxOut, absolute, transaction};
+    use std::str::FromStr;
+
+    let env = Env::new();
+    let mut ids = Vec::new();
+    let mut keys = Vec::new();
+    for i in 0..3 {
+        let v: serde_json::Value = serde_json::from_str(&env.ok(&[
+            "--json",
+            "wallet",
+            "create",
+            "--label",
+            &format!("c{i}"),
+            "--no-encrypt",
+        ]))
+        .unwrap();
+        let id = v["id"].as_str().unwrap().to_string();
+        keys.push(env.ok(&["lockbox", "export-key", &id]).trim().to_string());
+        ids.push(id);
+    }
+    let created: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "--json", "lockbox", "create", "--name", "Family", "-m", "2", "--key", &keys[0], "--key", &keys[1],
+        "--key", &keys[2],
+    ]))
+    .unwrap();
+    let lb_id = created["id"].as_str().unwrap().to_string();
+    assert!(created["first_address"].as_str().unwrap().starts_with("tb1q"));
+    let shared = env.dir.path().join("family.lockbox");
+    env.ok(&["lockbox", "export", &lb_id, s(&shared)]);
+
+    // Armory 0.93 lockboxes import next to it.
+    env.ok(&["lockbox", "import", s(&fixture("multisigs.txt"))]);
+    let list = env.ok(&["lockbox", "list"]);
+    for id in ["xxfz2Xk9", "YQR7xnZj", "rcEKCpQY", "ZprWK4fA", lb_id.as_str()] {
+        assert!(list.contains(id), "{list}");
+    }
+    assert!(env.ok(&["lockbox", "show", "ZprWK4fA"]).contains("2Mz6THSBFmLNGrMAqcdy3g8gpH6jrVBWqu7"));
+
+    // A spend PSBT as Core would build it, signed by two cosigners on separate copies.
+    let lb = armory_wallet::lockbox::Lockbox::from_json(&std::fs::read(&shared).unwrap()).unwrap();
+    let addr = lb.address(0, 0).unwrap();
+    let funding = Transaction {
+        version: transaction::Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn::default()],
+        output: vec![TxOut { value: Amount::from_sat(80_000), script_pubkey: addr.script_pubkey() }],
+    };
+    let spend = Transaction {
+        version: transaction::Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn { previous_output: OutPoint::new(funding.compute_txid(), 0), ..Default::default() }],
+        output: vec![TxOut {
+            value: Amount::from_sat(79_000),
+            script_pubkey: lb.address(1, 0).unwrap().script_pubkey(),
+        }],
+    };
+    let mut psbt = bitcoin::psbt::Psbt::from_unsigned_tx(spend).unwrap();
+    psbt.inputs[0].witness_utxo = Some(funding.output[0].clone());
+    psbt.inputs[0].witness_script = Some(lb.script(0, 0).unwrap());
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    for k in &keys {
+        let (origin, rest) = k.trim_start_matches('[').split_once(']').unwrap();
+        let (fp, path) = origin.split_once('/').unwrap();
+        let x = bitcoin::bip32::Xpub::from_str(rest).unwrap();
+        let child = x.derive_pub(&secp, &[0u32.into(), 0u32.into()]).unwrap();
+        let full =
+            bitcoin::bip32::DerivationPath::from_str(&format!("m/{}/0/0", path.replace('h', "'"))).unwrap();
+        psbt.inputs[0]
+            .bip32_derivation
+            .insert(child.public_key, (bitcoin::bip32::Fingerprint::from_str(fp).unwrap(), full));
+    }
+    let a = env.file("a.psbt", &format!("{psbt}\n"));
+    let b = env.file("b.psbt", &format!("{psbt}\n"));
+    env.ok(&["tx", "sign", s(&a), "--wallet", &ids[0]]);
+    assert!(env.ok(&["tx", "show", s(&a)]).contains("1 of 2"));
+    env.ok(&["tx", "sign", s(&b), "--wallet", &ids[2]]);
+    let merged = env.dir.path().join("m.psbt");
+    assert!(env.ok(&["tx", "combine", s(&a), s(&b), "-o", s(&merged)]).contains("signed:  1/1"));
+    let mut done = bitcoin::psbt::Psbt::from_str(std::fs::read_to_string(&merged).unwrap().trim()).unwrap();
+    armory_wallet::sign::finalize(&mut done).unwrap();
+    assert_eq!(done.extract_tx().unwrap().input[0].witness.len(), 4);
+}

@@ -277,6 +277,40 @@ impl Core {
         Ok(reqs)
     }
 
+    /// Watch a lockbox in Core (`armory-lb-<id>`).
+    pub fn import_lockbox(
+        &self,
+        lb: &armory_wallet::lockbox::Lockbox,
+        gap: u32,
+        rescan: Rescan,
+    ) -> Result<ImportReport> {
+        let id = format!("lb-{}", lb.id);
+        let created = self.ensure_wallet(&id)?;
+        let ts = match rescan {
+            Rescan::Birthday => json!(lb.birthday),
+            Rescan::Now => json!("now"),
+            Rescan::From(t) => json!(t),
+        };
+        let reqs: Vec<Value> = lb
+            .descriptors()
+            .into_iter()
+            .enumerate()
+            .map(|(b, d)| match lb.kind {
+                armory_wallet::lockbox::LockboxKind::WshSortedMulti => {
+                    let next = if b == 0 { lb.next_receive } else { lb.next_change };
+                    json!({"desc": d, "range": [0, next + gap - 1], "timestamp": ts, "internal": b == 1, "active": false})
+                }
+                armory_wallet::lockbox::LockboxKind::LegacyP2sh => json!({"desc": d, "timestamp": ts}),
+            })
+            .collect();
+        let name = Self::wallet_name(&id);
+        let res = self.rpc.call(Some(&name), "importdescriptors", json!([reqs]))?;
+        if let Some(fail) = res.as_array().and_then(|a| a.iter().find(|r| r["success"] != json!(true))) {
+            return Err(NodeError::Unexpected(format!("importdescriptors failed: {}", fail["error"])));
+        }
+        Ok(ImportReport { core_wallet: name, created, descriptors: reqs.len(), rescan_from: lb.birthday })
+    }
+
     /// Mirror the wallet's descriptors into Core (creating the watch-only wallet if needed).
     pub fn import(&self, w: &ModernWallet, gap: u32, rescan: Rescan) -> Result<ImportReport> {
         let created = self.ensure_wallet(&w.id)?;

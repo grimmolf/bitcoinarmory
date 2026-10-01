@@ -26,10 +26,10 @@ use crate::print;
 pub struct FeeArgs {
     /// Fee rate in sat/vB.
     #[arg(long)]
-    fee_rate: Option<f64>,
+    pub fee_rate: Option<f64>,
     /// Confirmation target in blocks for Core's fee estimate (default 6).
     #[arg(long, conflicts_with = "fee_rate")]
-    target: Option<u16>,
+    pub target: Option<u16>,
 }
 
 #[derive(Args)]
@@ -92,6 +92,12 @@ pub enum TxCmd {
         #[arg(long, short)]
         output: Option<PathBuf>,
     },
+    /// Merge the signatures of several copies of the same PSBT (multisig).
+    Combine {
+        files: Vec<PathBuf>,
+        #[arg(long, short)]
+        output: PathBuf,
+    },
     /// Finalize a signed PSBT and broadcast it through Bitcoin Core.
     Broadcast { file: PathBuf },
 }
@@ -104,12 +110,12 @@ pub fn read_psbt(path: &Path) -> Result<Psbt> {
     Ok(Psbt::from_str(String::from_utf8_lossy(&bytes).trim())?)
 }
 
-fn write_psbt(path: &Path, psbt: &Psbt) -> Result<()> {
+pub(crate) fn write_psbt(path: &Path, psbt: &Psbt) -> Result<()> {
     armory_wallet::store::atomic_write(path, format!("{psbt}\n").as_bytes())?;
     Ok(())
 }
 
-fn fee_rate(core: &Core, f: &FeeArgs) -> Result<f64> {
+pub(crate) fn fee_rate(core: &Core, f: &FeeArgs) -> Result<f64> {
     match f.fee_rate {
         Some(r) if r > 0.0 => Ok(r),
         Some(_) => bail!("fee rate must be positive"),
@@ -153,7 +159,7 @@ fn account_scripts(w: &ModernWallet, i: usize) -> Vec<ScriptBuf> {
     v
 }
 
-fn summary_text(s: &PsbtSummary) -> String {
+pub(crate) fn summary_text(s: &PsbtSummary) -> String {
     let btc = |x: u64| Amount::from_sat(x).to_string_in(Denomination::Bitcoin);
     let mut t = format!("Transaction {}\n  inputs:  {}", s.txid, s.inputs);
     if let Some(total) = s.input_total {
@@ -179,6 +185,9 @@ fn summary_text(s: &PsbtSummary) -> String {
         s.inputs,
         if s.rbf { ", replaceable (RBF)" } else { "" }
     ));
+    if s.signature_status.iter().any(|x| x.contains(" of ")) {
+        t.push_str(&format!("\n  status:  {}", s.signature_status.join(", ")));
+    }
     t
 }
 
@@ -423,6 +432,24 @@ pub fn tx(ctx: &Context, node: &NodeArgs, json: bool, cmd: TxCmd) -> Result<()> 
             write_psbt(&out, &psbt)?;
             print(json, &serde_json::json!({"signed_inputs": n, "file": out}), |_| {
                 format!("Signed {n} input(s); wrote {}.", out.display())
+            });
+        }
+        TxCmd::Combine { files, output } => {
+            let mut it = files.iter();
+            let first = it.next().ok_or_else(|| anyhow!("give at least two PSBT files"))?;
+            let mut psbt = read_psbt(first)?;
+            for f in it {
+                psbt.combine(read_psbt(f)?).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+            }
+            write_psbt(&output, &psbt)?;
+            let s = sign::summarize(&psbt, ctx.network.bitcoin(), &|_| false);
+            print(json, &s, |s| {
+                format!(
+                    "{}
+Wrote {}.",
+                    summary_text(s),
+                    output.display()
+                )
             });
         }
         TxCmd::Broadcast { file } => {

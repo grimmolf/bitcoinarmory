@@ -66,6 +66,8 @@ pub struct PsbtSummary {
     pub fee: Option<u64>,
     pub vsize_estimate: usize,
     pub signed_inputs: usize,
+    /// Per input: "complete", "unsigned" or "k of m" for multisig.
+    pub signature_status: Vec<String>,
     pub rbf: bool,
 }
 
@@ -105,9 +107,18 @@ impl ModernWallet {
     pub fn annotate_legacy_inputs(&self, psbt: &mut Psbt, keys: &WalletKeys) {
         for i in 0..psbt.inputs.len() {
             let Some(out) = prevout(psbt, i) else { continue };
+            let ms_keys: Vec<Vec<u8>> = psbt.inputs[i]
+                .witness_script
+                .as_ref()
+                .or(psbt.inputs[i].redeem_script.as_ref())
+                .and_then(|s| crate::lockbox::script_keys(s.as_bytes()).ok())
+                .map(|(_, k)| k)
+                .unwrap_or_default();
             for pk in keys.legacy.keys() {
                 let bpk = bitcoin::PublicKey { compressed: false, inner: *pk };
-                if out.script_pubkey == ScriptBuf::new_p2pkh(&bpk.pubkey_hash()) {
+                if out.script_pubkey == ScriptBuf::new_p2pkh(&bpk.pubkey_hash())
+                    || ms_keys.iter().any(|k| k[..] == pk.serialize_uncompressed()[..])
+                {
                     psbt.inputs[i].bip32_derivation.insert(*pk, legacy_source());
                 }
             }
@@ -151,7 +162,44 @@ pub fn finalize(psbt: &mut Psbt) -> Result<()> {
             continue;
         }
         let spk = &out.script_pubkey;
-        if spk.is_p2tr() {
+        let ms_script = if spk.is_p2wsh() {
+            inp.witness_script.clone()
+        } else if spk.is_p2sh() {
+            inp.redeem_script.clone().filter(|r| crate::lockbox::script_keys(r.as_bytes()).is_ok())
+        } else {
+            None
+        };
+        if let Some(script) = ms_script {
+            let (m, keys) = crate::lockbox::script_keys(script.as_bytes())?;
+            let mut sigs = Vec::new();
+            for k in &keys {
+                if let Ok(pk) = bitcoin::PublicKey::from_slice(k) {
+                    if let Some(sig) = inp.partial_sigs.get(&pk) {
+                        sigs.push(sig.to_vec());
+                    }
+                }
+            }
+            if sigs.len() < usize::from(m) {
+                return Err(ModernError::Invalid(format!("input {i}: {} of {m} signatures", sigs.len())));
+            }
+            sigs.truncate(usize::from(m));
+            if spk.is_p2wsh() {
+                let mut items: Vec<Vec<u8>> = vec![vec![]];
+                items.extend(sigs);
+                items.push(script.to_bytes());
+                inp.final_script_witness = Some(Witness::from_slice(&items));
+            } else {
+                let mut b = Builder::new().push_opcode(bitcoin::opcodes::OP_0);
+                for sg in sigs {
+                    b = b.push_slice(
+                        PushBytesBuf::try_from(sg).map_err(|e| ModernError::Invalid(e.to_string()))?,
+                    );
+                }
+                let rs = PushBytesBuf::try_from(script.to_bytes())
+                    .map_err(|e| ModernError::Invalid(e.to_string()))?;
+                inp.final_script_sig = Some(b.push_slice(rs).into_script());
+            }
+        } else if spk.is_p2tr() {
             let sig =
                 inp.tap_key_sig.ok_or_else(|| ModernError::Invalid(format!("input {i}: not signed")))?;
             inp.final_script_witness = Some(Witness::from_slice(&[sig.to_vec()]));
@@ -277,10 +325,46 @@ pub fn summarize(psbt: &Psbt, network: Network, mine: &dyn Fn(&ScriptBuf) -> boo
                 || i.final_script_witness.is_some()
         })
         .count();
-    // Rough virtual size: 68 vB per P2WPKH input, 58 per P2TR, 180 per P2PKH (uncompressed key).
+    let status: Vec<String> = psbt
+        .inputs
+        .iter()
+        .map(|i| {
+            if i.final_script_sig.is_some() || i.final_script_witness.is_some() {
+                return "complete".to_string();
+            }
+            let ms = i
+                .witness_script
+                .as_ref()
+                .or(i.redeem_script.as_ref())
+                .and_then(|s| crate::lockbox::script_keys(s.as_bytes()).ok());
+            match ms {
+                Some((m, _)) => {
+                    let have = i.partial_sigs.len().min(usize::from(m));
+                    if have >= usize::from(m) { "complete".into() } else { format!("{have} of {m}") }
+                }
+                None if !i.partial_sigs.is_empty() || i.tap_key_sig.is_some() => "complete".into(),
+                None => "unsigned".into(),
+            }
+        })
+        .collect();
+    // Rough virtual size: 68 vB per P2WPKH input, 58 per P2TR, 180 per P2PKH (uncompressed key);
+    // multisig from its script.
     let mut vsize = 11 + psbt.unsigned_tx.output.iter().map(|o| 9 + o.script_pubkey.len()).sum::<usize>();
     for i in 0..psbt.inputs.len() {
+        let ms = psbt.inputs[i]
+            .witness_script
+            .as_ref()
+            .map(|s| (s, true))
+            .or(psbt.inputs[i].redeem_script.as_ref().map(|s| (s, false)))
+            .and_then(|(s, w)| {
+                crate::lockbox::script_keys(s.as_bytes()).ok().map(|(m, _)| (s.len(), usize::from(m), w))
+            });
         vsize += match prevout(psbt, i).map(|o| o.script_pubkey) {
+            _ if ms.is_some() => {
+                let (len, m, witness) = ms.unwrap();
+                let data = 1 + m * 73 + len + 3;
+                if witness { 41 + data.div_ceil(4) } else { 41 + data }
+            }
             Some(s) if s.is_p2tr() => 58,
             Some(s) if s.is_p2pkh() => 180,
             _ => 68,
@@ -294,6 +378,7 @@ pub fn summarize(psbt: &Psbt, network: Network, mine: &dyn Fn(&ScriptBuf) -> boo
         outputs,
         vsize_estimate: vsize,
         signed_inputs: signed,
+        signature_status: status,
         rbf: psbt.unsigned_tx.input.iter().any(|i| i.sequence.is_rbf()),
     }
 }
