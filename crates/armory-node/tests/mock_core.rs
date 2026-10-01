@@ -30,7 +30,19 @@ fn handler(path: &str, method: &str, params: &Value) -> Result<Value, (i64, &'st
         "loadwallet" => return Err((-18, "Path does not exist")),
         "createwallet" => json!({"name": params[0]}),
         "importdescriptors" => {
-            json!(params[0].as_array().unwrap().iter().map(|_| json!({"success": true})).collect::<Vec<_>>())
+            // Like Core after a keypool top-up: ranged descriptors already cover [0,999].
+            json!(
+                params[0]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| match r["range"][1].as_u64() {
+                        Some(end) if end < 999 => json!({"success": false, "error": {"code": -8,
+                        "message": "new range must include current range = [0,999]"}}),
+                        _ => json!({"success": true}),
+                    })
+                    .collect::<Vec<_>>()
+            )
         }
         "getbalances" => json!({"mine": {"trusted": 1.5, "untrusted_pending": 0.00012345, "immature": 0.0}}),
         "listtransactions" => json!([
@@ -168,6 +180,11 @@ fn import_creates_watch_only_wallet_with_ranged_descriptors() {
     assert_eq!(reqs[0]["range"], json!([0, 99]));
     assert_eq!(reqs[1]["internal"], json!(true));
     assert_eq!(reqs[0]["timestamp"], json!(0), "restored wallets rescan from genesis");
+    // Core refused the narrower range; both descriptors are retried with the range it reported.
+    let retry = calls.iter().filter(|c| c.1 == "importdescriptors").nth(1).unwrap();
+    let reqs = retry.2[0].as_array().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert!(reqs.iter().all(|r| r["range"] == json!([0, 999])));
 }
 
 #[test]

@@ -313,11 +313,43 @@ impl Core {
             })
             .collect();
         let name = Self::wallet_name(&id);
-        let res = self.rpc.call(Some(&name), "importdescriptors", json!([reqs]))?;
-        if let Some(fail) = res.as_array().and_then(|a| a.iter().find(|r| r["success"] != json!(true))) {
-            return Err(NodeError::Unexpected(format!("importdescriptors failed: {}", fail["error"])));
-        }
+        self.import_descriptors(&name, reqs.clone())?;
         Ok(ImportReport { core_wallet: name, created, descriptors: reqs.len(), rescan_from: lb.birthday })
+    }
+
+    /// Run `importdescriptors`. Core tops up ranged descriptors on its own (to its keypool size) and
+    /// refuses a re-import whose range is narrower than what it already watches, so such requests are
+    /// widened to the range Core reports and retried.
+    fn import_descriptors(&self, wallet: &str, mut reqs: Vec<Value>) -> Result<()> {
+        for _ in 0..3 {
+            let res = self.rpc.call(Some(wallet), "importdescriptors", json!([reqs]))?;
+            let results = res.as_array().ok_or_else(|| NodeError::Unexpected("importdescriptors".into()))?;
+            let mut retry = Vec::new();
+            for (req, r) in reqs.iter().zip(results) {
+                if r["success"] == json!(true) {
+                    continue;
+                }
+                let msg = r["error"]["message"].as_str().unwrap_or("");
+                match current_range_end(msg) {
+                    Some(end) if req.get("range").is_some() => {
+                        let mut req = req.clone();
+                        req["range"] = json!([0, end]);
+                        retry.push(req);
+                    }
+                    _ => {
+                        return Err(NodeError::Unexpected(format!(
+                            "importdescriptors failed: {}",
+                            r["error"]
+                        )));
+                    }
+                }
+            }
+            if retry.is_empty() {
+                return Ok(());
+            }
+            reqs = retry;
+        }
+        Err(NodeError::Unexpected("importdescriptors: range negotiation did not converge".into()))
     }
 
     /// Mirror the wallet's descriptors into Core (creating the watch-only wallet if needed).
@@ -325,10 +357,7 @@ impl Core {
         let created = self.ensure_wallet(&w.id)?;
         let reqs = Self::import_requests(w, gap, rescan)?;
         let name = Self::wallet_name(&w.id);
-        let res = self.rpc.call(Some(&name), "importdescriptors", json!([reqs]))?;
-        if let Some(fail) = res.as_array().and_then(|a| a.iter().find(|r| r["success"] != json!(true))) {
-            return Err(NodeError::Unexpected(format!("importdescriptors failed: {}", fail["error"])));
-        }
+        self.import_descriptors(&name, reqs.clone())?;
         Ok(ImportReport {
             core_wallet: name,
             created,
@@ -482,4 +511,11 @@ impl Core {
         }
         Ok(self.rpc.call(None, "sendrawtransaction", json!([raw_hex]))?.as_str().unwrap_or("").to_string())
     }
+}
+
+/// Parse Core's "new range must include current range = [0,N]" error.
+fn current_range_end(msg: &str) -> Option<u64> {
+    let rest = msg.split("current range = [").nth(1)?;
+    let inner = rest.split(']').next()?;
+    inner.split(',').nth(1)?.trim().parse().ok()
 }
