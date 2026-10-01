@@ -1,0 +1,38 @@
+name: rust
+
+on:
+  push:
+    paths: ["crates/**", "Cargo.*", "fixtures/**", ".github/workflows/rust.yml"]
+  pull_request:
+    paths: ["crates/**", "Cargo.*", "fixtures/**", ".github/workflows/rust.yml"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fedora:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - run: dnf install -y git gcc rust cargo rustfmt clippy
+      - uses: actions/checkout@v4
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --release
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --release
+
+  legacy-oracle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/legacy-oracle/build.sh
+      - run: diff <(tools/legacy-oracle/build/harness) tools/legacy-oracle/expected-output.txt

@@ -4,6 +4,7 @@
 //! `02-backups-and-recovery.md` for paper and fragmented backups.
 
 pub mod error;
+pub mod keytext;
 pub mod legacy;
 pub mod network;
 pub mod record;
