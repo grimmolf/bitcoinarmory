@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/grimmolf/bitcoinarmory"
+authors = ["Armory contributors"]
+
+[workspace.dependencies]
+armory-crypto = { path = "crates/armory-crypto" }
+bitcoin = { version = "0.32", default-features = false, features = ["std", "rand-std"] }
+aes = "0.8"
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"
+zeroize = { version = "1", features = ["derive"] }
+thiserror = "2"
+hex = "0.4"
+rand = "0.8"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

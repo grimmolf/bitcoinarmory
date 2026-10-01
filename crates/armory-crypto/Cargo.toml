@@ -1,0 +1,26 @@
+[package]
+name = "armory-crypto"
+description = "Byte-exact primitives of the legacy Armory wallet: hashing, Armory HMAC, checksums, Easy16, ROMix KDF, AES, legacy key chain, Shamir fragments, SecurePrint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bitcoin.workspace = true
+aes.workspace = true
+num-bigint.workspace = true
+num-traits.workspace = true
+num-integer.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

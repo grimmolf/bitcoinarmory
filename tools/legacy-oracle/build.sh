@@ -12,7 +12,7 @@ OUT="${1:-$ROOT/tools/legacy-oracle/build}"
 mkdir -p "$OUT/cryptopp"
 
 # Build Crypto++ out of tree so the legacy source dir stays pristine.
-cp -u "$SRC"/cryptopp/*.cpp "$SRC"/cryptopp/*.h "$OUT/cryptopp/"
+cp "$SRC"/cryptopp/*.cpp "$SRC"/cryptopp/*.h "$OUT/cryptopp/"
 (
   cd "$OUT/cryptopp"
   objs=()
