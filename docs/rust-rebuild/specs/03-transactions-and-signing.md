@@ -789,7 +789,7 @@ Verification of a block: `verifySignature(sig, msg, 'v1', ADDRBYTE)`.
 Neither function has callers in 0.93.3 (grep), so this format is not produced or
 accepted by any UI path. Listed for completeness only.
 
-### 5.8 UI surface (TD:59-360; DlgSignVerify in QD)
+### 5.8 UI surface (`MessageSigningVerificationDialog`, TD:20-360)
 
 Sign tab: address (wallet-owned, P2SH warns), message; buttons "Bare Signature"
 (`ASv0` → base64 only), "Base64 Block" (`ASv1B64`), "Clearsign" (`ASv1CS`).
@@ -823,12 +823,12 @@ Caller checks (`parseUriLink`, AQ:2626-2705): offline → refuse; empty dict →
 ```
 "bitcoin:" addr
 [ "?" ]                               if amt or msg
-[ "amount=" coin2str(amt, maxZeros=0).strip() ]   e.g. 1.5 BTC -> "1.5", 1 BTC -> "1.0"
+[ "amount=" coin2str(amt, maxZeros=0).strip() ]   e.g. 1.5 BTC -> "1.5", 1 BTC -> "1", 10 BTC -> "10", 0.1 -> "0.1", 1 sat -> "0.00000001"
 [ "&" ]                               if amt and msg
 [ "label=" uriReservedToPercent(msg) ]
 ```
 
-`uriReservedToPercent` (AU:2926-2935) replaces, in this order, each of
+`coin2str` (AU:1248-1277) right-justifies to 18 chars, chops up to `ndec−maxZeros` trailing zeros (replaced by spaces) and finally deletes `'. '`, so whole-BTC amounts lose the decimal point (the `s.lstrip()` at AU:1270 discards its result). `uriReservedToPercent` (AU:2926-2935) replaces, in this order, each of
 `% ! * ' ( ) ; : @ & = + $ , / ? # [ ] " <space>` with `%XX` (lowercase hex via
 `int_to_hex`); `%` first to avoid double encoding. Non-ASCII is not encoded.
 `uriPercentToReserved` (AU:2939-2949) decodes every `%XX`. Note the message is put in
@@ -924,7 +924,7 @@ Nothing above 175: OP_NOP1-10, CLTV (0xb1), CSV (0xb2), OP_CHECKSIGADD (0xba) ar
 
 ## 8. Fixture check (tiab golden files)
 
-Directory: `pytest/tiab.zip` → `tiab/armory/` (unpacked under the session scratchpad).
+Directory: `pytest/tiab.zip` → `tiab/armory/` (e.g. `tiab/armory/armory_8gRmZv48_.signed.tx`, 950 bytes in the zip listing); byte-identical copies are checked in at `fixtures/legacy/`.
 All four files: CRLF line endings, 80-char header/footer and base64 lines, testnet magic
 `0b110907`, all inputs P2PKH with uncompressed keys.
 
@@ -1062,13 +1062,43 @@ Expected (testMultisig.py:131-134): `tx1hash (BE) = aa739836a44451be555f74a02f08
 `tx2hash (BE) = 9072559e9e2772cd6ac88683531a512cba6c2fee82b2476ed5e84c24abe5f526` (recomputed ✔).
 Round-trip `serialize(unserialize(x)) == x` (testPyTX.py:309-320).
 
-Larger vectors (copy from source; too long to inline): `multiTx1raw`/`multiTx2raw`
-(testPyTX.py:43-71; the 2nd has a non-canonical `220000fb…` r-encoding in input 3),
-`multiSig2of3` (bare + P2SH inputs, testPyTX.py:75-115), `multiSig7of7`
-(testPyTX.py:117-121), `hexBlock` (testPyTX.py:173-190), `tx1Fake`/`tx2Fake`
-(testPyTX.py:194-211; also testMultisig.py:104-120), script-eval pairs in `test2of2MultiSigTx`,
-`test2of3MultiSigTx`, `testMultiSig` (testPyTX.py:377-400; non-standard
-`OP_ROT/OP_TUCK`-style multisig scripts evaluated by `PyScriptProcessor`).
+Larger vectors — copy from source (multi-line, whitespace-separated hex); the txid
+(BE, recomputed in Python 3) is given as a checksum for the extraction:
+
+| Name | testPyTX.py lines | bytes | nIn/nOut | txid (BE) |
+|---|---|---|---|---|
+| `multiTx1raw` | 43-56 | 798 | 4/2 | `3b00cbfddde83577f7482bfa69b3d1638cfc8b2029f18cc9b3862a766c2cbbec` |
+| `multiTx2raw` (input 3 has a non-canonical `220000fb…` r) | 58-71 | 799 | 4/2 | `325e917f526dabb8a9b3a9df250ebed0b0e84bbe70e4984fde2bc4b842e5d5b4` |
+| `multiSig2of3` (in 0 bare 2-of-3, ins 1-2 P2SH 2-of-3) | 75-113 | 1191 | 3/1 | `b83c5f332673c5b6c13bc788e5678cf577f0957883b49fd4f72876a9de995aad` |
+| `multiSig7of7` | 117-169 | 1648 | 2/2 | `190a8ede65fbb3e9dc22ca742c8b322a276706521e2b76216f5f0a0596618b96` |
+| `tx1Fake` (also testMultisig.py:104-111) | 194-201 | 193 | 1/2 | `6ea8e72e97f655c3707e6d7c2be159ac21d01082ba2c8697624ab638da37b8a5` |
+| `tx2Fake` (spends `tx1Fake`:1; also testMultisig.py:113-120) | 203-211 | 225 | 1/1 | `9112f5ed8e4dd757b88ade3da06eeedad68be50043d5a2f029f518869c33683b` |
+| `hexBlock` (full block, round-trip + merkle root) | 173-190 | | | |
+
+Script-evaluation pairs (`PyScriptProcessor.setTxObjects(tx1, tx2, 0)` then
+`verifyTransactionValid()` must be True; tx2 input 0 spends a non-standard
+multisig-style output of tx1). Verbatim from testPyTX.py:
+
+`test2of2MultiSigTx` (testPyTX.py:377-379) — tx1 txid `2df3050037b3289ca97f690867674bfafbe664c6ceee88fae72b910a6508961c`, tx2 txid `9a4aae975ad50d6585c41442337231d474e782448e79d0bc12df4754a5198335`:
+
+```
+tx1 = 010000000189a0022c8291b4328338ec95179612b8ebf72067051de019a6084fb97eae0ebe000000004a4930460221009627882154854e3de066943ba96faba02bb8b80c1670a0a30d0408caa49f03df022100b625414510a2a66ebb43fffa3f4023744695380847ee1073117ec90cb60f2c8301ffffffff0210c18d0000000000434104a701496f10db6aa8acbb6a7aa14d62f4925f8da03de7f0262010025945f6ebcc3efd55b6aa4bc6f811a0dc1bbdd2644bdd81c8a63766aa11f650cd7736bbcaf8ac001bb7000000000043526b006b7dac7ca914fc1243972b59c1726735d3c5cca40e415039dce9879a6c936b7dac7ca914375dd72e03e7b5dbb49f7e843b7bef4a2cc2ce9e879a6c936b6c6ca200000000
+tx2 = 01000000011c9608650a912be7fa88eecec664e6fbfa4b676708697fa99c28b3370005f32d01000000fd1701483045022017462c29efc9158cf26f2070d444bb2b087b8a0e6287a9274fa36fad30c46485022100c6d4cc6cd504f768389637df71c1ccd452e0691348d0f418130c31da8cc2a6e8014104e83c1d4079a1b36417f0544063eadbc44833a992b9667ab29b4ff252d8287687bad7581581ae385854d4e5f1fcedce7de12b1aec1cb004cabb2ec1f3de9b2e60493046022100fdc7beb27de0c3a53fbf96df7ccf9518c5fe7873eeed413ce17e4c0e8bf9c06e022100cc15103b3c2e1f49d066897fe681a12e397e87ed7ee39f1c8c4a5fef30f4c2c60141047cf315904fcc2e3e2465153d39019e0d66a8aaec1cec1178feb10d46537427239fd64b81e41651e89b89fefe6a23561d25dddc835395dd3542f83b32a1906aebffffffff01c0d8a700000000001976a914fc1243972b59c1726735d3c5cca40e415039dce988ac00000000
+```
+
+`test2of3MultiSigTx` (testPyTX.py:385-387) — tx1 txid `e232e0055dbdca88bbaa79458683195a0b7c17c5b6c524a8d146721d4d4d652f`, tx2 txid `a1c8a7c558835f45d9f584934f2602f444efb0467940cf83eadc97199326c909`:
+
+```
+tx1 = 010000000371c06e0639dbe6bc35e6f948da4874ae69d9d91934ec7c5366292d0cbd5f97b0010000008a47304402200117cdd3ec6259af29acea44db354a6f57ac10d8496782033f5fe0febfd77f1b02202ceb02d60dbb43e6d4e03e5b5fbadc031f8bbb3c6c34ad307939947987f600bf01410452d63c092209529ca2c75e056e947bc95f9daffb371e601b46d24377aaa3d004ab3c6be2d6d262b34d736b95f3b0ef6876826c93c4077d619c02ebd974c7facdffffffffa65aa866aa7743ec05ba61418015fc32ecabd99886732056f1d4454c8f762bf8000000008c493046022100ea0a9b41c9372837e52898205c7bebf86b28936a3ee725672d0ca8f434f876f0022100beb7243a51fbc0997e55cb519d3b9cbd59f7aba68d80ba1e8adbb53443cda3c00141043efd1ca3cffc50638031281d227ff347a3a27bc145e2f846891d29f87bc068c27710559c4d9cd71f7e9e763d6e2753172406eb1ed1fadcaf9a8972b4270f05b4ffffffffd866d14151ee1b733a2a7273f155ecb25c18303c31b2c4de5aa6080aef2e0006000000008b483045022052210f95f6b413c74ce12cfc1b14a36cb267f9fa3919fa6e20dade1cd570439f022100b9e5b325f312904804f043d06c6ebc8e4b1c6cd272856c48ab1736b9d562e10c01410423fdddfe7e4d70d762dd6596771e035f4b43d54d28c2231be1102056f81f067914fe4fb6fd6e3381228ee5587ddd2028c846025741e963d9b1d6cf2c2dea0dbcffffffff0210ef3200000000004341048a33e9fd2de28137574cc69fe5620199abe37b7d08a51c528876fe6c5fa7fc28535f5a667244445e79fffc9df85ec3d79d77693b1f37af0e2d7c1fa2e7113a48acc0d454070000000061526b006b7dac7ca9143cd1def404e12a85ead2b4d3f5f9f817fb0d46ef879a6c936b7dac7ca9146a4e7d5f798e90e84db9244d4805459f87275943879a6c936b7dac7ca914486efdd300987a054510b4ce1148d4ad290d911e879a6c936b6c6ca200000000
+tx2 = 01000000012f654d4d1d7246d1a824c5b6c5177c0b5a1983864579aabb88cabd5d05e032e201000000fda0014730440220151ad44e7f78f9e0c4a3f2135c19ca3de8dbbb7c58893db096c0c5f1573d5dec02200724a78c3fa5f153103cb46816df46eb6cfac3718038607ddec344310066161e01410459fd82189b81772258a3fc723fdda900eb8193057d4a573ee5ad39e26b58b5c12c4a51b0edd01769f96ed1998221daf0df89634a7137a8fa312d5ccc95ed8925483045022100ca34834ece5925cff6c3d63e2bda6b0ce0685b18f481c32e70de9a971e85f12f0220572d0b5de0cf7b8d4e28f4914a955e301faaaa42f05feaa1cc63b45f938d75d9014104ce6242d72ee67e867e6f8ec434b95fcb1889c5b485ec3414df407e11194a7ce012eda021b68f1dd124598a9b677d6e7d7c95b1b7347f5c5a08efa628ef0204e1483045022074e01e8225e8c4f9d0b3f86908d42a61e611f406e13817d16240f94f52f49359022100f4c768dd89c6435afd3834ae2c882465ade92d7e1cc5c2c2c3d8d25c41b3ea61014104ce66c9f5068b715b62cc1622572cd98a08812d8ca01563045263c3e7af6b997e603e8e62041c4eb82dfd386a3412c34c334c34eb3c76fb0e37483fc72323f807ffffffff01b0ad5407000000001976a9146a4e7d5f798e90e84db9244d4805459f8727594388ac00000000
+```
+
+`testMultiSig` (testPyTX.py:393-395) — tx1 txid `87abda4755e492de6149affbfc67d42a367f76c166c6bc31c8dfb916f74f66bb`, tx2 txid `a17b21f52859ed326d1395d8a56d5c7389f5fc83c17b9140a71d7cb86fdf0f5f`:
+
+```
+tx1 = 0100000001845ad165bdc0f9b5829cf5a594c4148dfd89e24756303f3a8dabeb597afa589b010000008b483045022063c233df8efa3d1885e069e375a8eabf16b23475ef21bdc9628a513ee4caceb702210090a102c7b602043e72b34a154d495ac19b3b9e42acb962c399451f2baead8f4c014104b38f79037ad25b84a564eaf53ede93dec70b35216e6682aa71a47cefa2996ec49acfbb0a8730577c62ef9a7cc20c740aaaaee75419bef9640a4216c2b49c42d3ffffffff02000c022900000000434104c08c0a71ccbe838403e3870aa1ab871b0ab3a6014b0ba41f6df2b9aefea73134ecaa0b27797620e402a33799e9047f86519d9e43bbd504cf753c293752933f4fac406f40010000000062537a7652a269537a829178a91480677c5392220db736455533477d0bc2fba65502879b69537a829178a91402d7aa2e76d9066fb2b3c41ff8839a5c81bdca19879b69537a829178a91410039ce4fdb5d4ee56148fe3935b9bfbbe4ecc89879b6953ae00000000
+tx2 = 0100000001bb664ff716b9dfc831bcc666c1767f362ad467fcfbaf4961de92e45547daab8701000000fd190100493046022100d73f633f114e0e0b324d87d38d34f22966a03b072803afa99c9408201f6d6dc6022100900e85be52ad2278d24e7edbb7269367f5f2d6f1bd338d017ca460008776614401473044022071fef8ac0aa6318817dbd242bf51fb5b75be312aa31ecb44a0afe7b49fcf840302204c223179a383bb6fcb80312ac66e473345065f7d9136f9662d867acf96c12a42015241048c006ff0d2cfde86455086af5a25b88c2b81858aab67f6a3132c885a2cb9ec38e700576fd46c7d72d7d22555eee3a14e2876c643cd70b1b0a77fbf46e62331ac4104b68ef7d8f24d45e1771101e269c0aacf8d3ed7ebe12b65521712bba768ef53e1e84fff3afbee360acea0d1f461c013557f71d426ac17a293c5eebf06e468253e00ffffffff0280969800000000001976a9140817482d2e97e4be877efe59f4bae108564549f188ac7015a7000000000062537a7652a269537a829178a91480677c5392220db736455533477d0bc2fba65502879b69537a829178a91402d7aa2e76d9066fb2b3c41ff8839a5c81bdca19879b69537a829178a91410039ce4fdb5d4ee56148fe3935b9bfbbe4ecc89879b6953ae00000000
+```
 
 ### 9.2 USTXI / signature vector — pytest/testMultisig.py:136-142, 155-200
 
@@ -1263,8 +1293,8 @@ Note `uri2`'s `?` inside the `r=` value is kept by `parse_qs` (only `&`/`;` spli
 
 | ID | Quirk | Source | Recommendation |
 |---|---|---|---|
-| Q1 | `UnsignedTransaction.lockTime` never set from input; serialize writes 0 | TX:1957, 1979, 2192 | Fix (carry lockTime); always 0 in existing files so compatible |
-| Q2 | `UNSIGNED_TX_VERSION` used as Bitcoin `tx.version` (=1) | TX:1978, 2108 | Keep tx.version = 1 for ID compatibility; decouple constants |
+| Q1 | `UnsignedTransaction.lockTime` is only ever assigned `0` (TX:1957); `createFromUnsignedTxIO` sets only `pytxObj.lockTime` (TX:1979); `serialize()` and `toJSONMap()['locktimeint']` read `self.lockTime` (TX:2192, 2256). The ID is computed from `pytxObj` (with lockTime L) but the body carries 0, so a USTX built with L≠0 (`createFromPyTx` on such a tx, or `createFromUnsignedTxInputSelection(..., lockTime=L)`) fails its own ID check (`UnserializeError`, TX:2236-2240) after one ASCII round-trip | TX:1957, 1979, 2192, 2256 | Fix (carry lockTime); every existing file has 0 so this is compatible |
+| Q2 | `UNSIGNED_TX_VERSION` used as Bitcoin `tx.version` (=1); `createFromPyTx` silently rewrites a source tx's version to 1, so a v2 tx cannot be represented | TX:1978, 2108 | Keep tx.version = 1 for ID compatibility; decouple constants |
 | Q3 | USTXI/DTXO layouts G0/G1/G2 all `version=1` | §1.9 | Write G2; optionally read G0/G1 with fallback |
 | Q4 | `p2shMap` hex-key vs raw-key mismatch → DTXO p2sh empty | TX:2071 vs 2088/2159 | Fix (single key type) |
 | Q5 | `readAsciiBlock` ignores BLKSTRING | AU:1339 | Check type in Rust; still accept any width/line ending |
