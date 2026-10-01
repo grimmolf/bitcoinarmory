@@ -52,6 +52,8 @@ fn handler(path: &str, method: &str, params: &Value) -> Result<Value, (i64, &'st
         "listunspent" => {
             json!([{"txid": "aa", "vout": 0, "address": "bcrt1qx", "amount": 1.5, "confirmations": 10, "desc": "wpkh(...)"}])
         }
+        // Target 1 simulates a hostile node: 1 BTC/kvB = 100 000 sat/vB.
+        "estimatesmartfee" if params[0] == 1 => json!({"feerate": 1.0, "blocks": 1}),
         "estimatesmartfee" => json!({"feerate": 0.00012, "blocks": 6}),
         "testmempoolaccept" => {
             if params[0][0] == "bad" {
@@ -213,6 +215,8 @@ fn balances_history_utxos_fees_broadcast() {
     assert_eq!(h[1].amount, 150_000_000);
     assert_eq!(c.utxos("x", 1).unwrap()[0].amount, 150_000_000);
     assert!((c.estimate_fee(6).unwrap() - 12.0).abs() < 1e-9);
+    let e = c.estimate_fee(1).unwrap_err().to_string();
+    assert!(e.contains("implausible fee estimate"), "{e}");
     assert_eq!(c.broadcast("00").unwrap(), "c0ffee");
     let e = c.broadcast("bad").unwrap_err().to_string();
     assert!(e.contains("min relay fee not met"), "{e}");

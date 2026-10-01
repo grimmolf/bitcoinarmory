@@ -834,3 +834,64 @@ fn wallet_import_digital_backup_and_raw_broadcast_checks() {
     let o = env.run(&["tx", "broadcast", "--raw", "00ff"], None);
     assert!(String::from_utf8_lossy(&o.stderr).contains("not a raw transaction"));
 }
+
+#[test]
+fn bump_fee_refuses_a_transaction_that_is_not_the_named_txid() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let env = Env::new();
+    let id = create_plain(&env);
+    // The node answers `gettransaction` with a valid transaction that does not hash to the txid asked for.
+    let tx = bitcoin::Transaction {
+        version: bitcoin::transaction::Version::TWO,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![bitcoin::TxIn::default()],
+        output: vec![bitcoin::TxOut {
+            value: bitcoin::Amount::from_sat(1000),
+            script_pubkey: Default::default(),
+        }],
+    };
+    let hex = bitcoin::consensus::encode::serialize_hex(&tx);
+    let reply = serde_json::json!({"result": {"hex": hex}, "error": null}).to_string();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut r = BufReader::new(s.try_clone().unwrap());
+        let mut len = 0;
+        loop {
+            let mut l = String::new();
+            r.read_line(&mut l).unwrap();
+            if l.trim().is_empty() {
+                break;
+            }
+            if let Some(v) = l.to_ascii_lowercase().strip_prefix("content-length:") {
+                len = v.trim().parse().unwrap();
+            }
+        }
+        r.read_exact(&mut vec![0u8; len]).unwrap();
+        write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{reply}", reply.len()).unwrap();
+    });
+    let txid = "11".repeat(32);
+    let o = env.run(
+        &[
+            "tx",
+            "bump-fee",
+            &id,
+            &txid,
+            "--fee-rate",
+            "20",
+            "--yes",
+            "--rpc-addr",
+            &addr,
+            "--rpc-user",
+            "u",
+            "--rpc-password",
+            "p",
+        ],
+        None,
+    );
+    server.join().unwrap(); // the node was only ever asked for `gettransaction`: nothing was signed
+    assert!(!o.status.success());
+    let e = String::from_utf8_lossy(&o.stderr);
+    assert!(e.contains("does not match txid"), "{e}");
+}

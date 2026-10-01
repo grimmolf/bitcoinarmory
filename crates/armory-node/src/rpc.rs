@@ -37,6 +37,9 @@ pub enum RpcError {
     Io(#[from] std::io::Error),
 }
 
+/// Largest RPC response accepted; far above anything this wallet's calls return.
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
 pub type Result<T> = std::result::Result<T, RpcError>;
 
 /// How to authenticate.
@@ -123,7 +126,8 @@ impl RpcClient {
 }
 
 fn read_response(stream: TcpStream) -> Result<(u16, Vec<u8>)> {
-    let mut r = BufReader::new(stream);
+    // Headroom over the body cap for headers and chunk framing; bounds every read below.
+    let mut r = BufReader::new(stream.take(MAX_RESPONSE_BYTES as u64 + 64 * 1024));
     let mut line = String::new();
     r.read_line(&mut line)?;
     let status: u16 = line
@@ -158,15 +162,58 @@ fn read_response(stream: TcpStream) -> Result<(u16, Vec<u8>)> {
             if n == 0 {
                 break;
             }
+            if n > MAX_RESPONSE_BYTES - body.len() {
+                return Err(too_large());
+            }
             let mut chunk = vec![0u8; n + 2];
             r.read_exact(&mut chunk)?;
             body.extend_from_slice(&chunk[..n]);
         }
     } else if let Some(n) = length {
+        if n > MAX_RESPONSE_BYTES {
+            return Err(too_large());
+        }
         body.resize(n, 0);
         r.read_exact(&mut body)?;
     } else {
-        r.read_to_end(&mut body)?;
+        (&mut r).take(MAX_RESPONSE_BYTES as u64 + 1).read_to_end(&mut body)?;
+        if body.len() > MAX_RESPONSE_BYTES {
+            return Err(too_large());
+        }
     }
     Ok((status, body))
+}
+
+fn too_large() -> RpcError {
+    RpcError::Malformed(format!("response larger than {MAX_RESPONSE_BYTES} bytes"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serve `reply` verbatim to one request and return a client pointed at it.
+    fn client_for(reply: &'static str) -> RpcClient {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(reply.as_bytes());
+        });
+        RpcClient::new(addr, Auth::UserPass("u".into(), "p".into()))
+    }
+
+    #[test]
+    fn hostile_sizes_are_errors_not_panics() {
+        for reply in [
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 18446744073709551615\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 16777217\r\n\r\n",
+        ] {
+            let e = client_for(reply).call(None, "x", json!([])).unwrap_err().to_string();
+            assert!(e.contains("larger than"), "{e}");
+        }
+    }
 }

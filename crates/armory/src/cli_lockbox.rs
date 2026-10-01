@@ -311,7 +311,7 @@ pub fn lockbox(ctx: &Context, node: &NodeArgs, json: bool, cmd: LockboxCmd) -> R
             let psbt = Psbt::from_str(&psbt)?;
             let scripts = lb.scripts(DEFAULT_GAP);
             let summary = sign::summarize(&psbt, net, &|s| scripts.contains(s));
-            let max_fee = (rate * summary.vsize_estimate as f64 * 2.0) as u64 + 1_000;
+            let max_fee = crate::ops::max_fee(rate, summary.vsize_estimate);
             sign::check_psbt(
                 &psbt,
                 &|s| scripts.contains(s),

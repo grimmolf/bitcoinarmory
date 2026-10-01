@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail, ensure};
 use armory_node::core::{Core, DEFAULT_GAP, FundRequest, Rescan};
 use armory_wallet::modern::{AccountKind, ModernWallet, Unlocked};
 use armory_wallet::sign::{self, Expected, PsbtSummary};
@@ -62,6 +62,15 @@ pub(crate) fn fee_rate(core: &Core, f: &FeeArgs) -> Result<f64> {
     }
 }
 
+/// Bitcoin Core's `-maxtxfee` default (0.1 BTC): no fee above this is ever accepted.
+const MAX_ABSOLUTE_FEE: u64 = 10_000_000;
+
+/// Fee cap for a transaction of `vsize` vB at `rate` sat/vB: twice the expected fee, never above
+/// [`MAX_ABSOLUTE_FEE`].
+pub(crate) fn max_fee(rate: f64, vsize: usize) -> u64 {
+    ((rate * vsize as f64 * 2.0) as u64 + 1_000).min(MAX_ABSOLUTE_FEE)
+}
+
 /// What the user asked for; the PSBT from Core is checked against it.
 pub(crate) struct Request {
     pub payments: Vec<(ScriptBuf, u64)>,
@@ -84,7 +93,7 @@ pub(crate) struct Prepared {
 pub(crate) fn check(w: &ModernWallet, psbt: &Psbt, request: Request) -> Result<PsbtSummary> {
     let scripts = own_scripts(w);
     let summary = sign::summarize(psbt, w.network, &|s| scripts.contains(s));
-    let max_fee = (request.fee_rate * summary.vsize_estimate as f64 * 2.0) as u64 + 1_000;
+    let max_fee = max_fee(request.fee_rate, summary.vsize_estimate);
     sign::check_psbt(
         psbt,
         &|s| scripts.contains(s),
@@ -331,6 +340,11 @@ pub(crate) fn prepare_bump(
     let (path, w) = m::open(ctx, id)?;
     let original: bitcoin::Transaction =
         bitcoin::consensus::encode::deserialize_hex(&core.wallet_tx_hex(&w.id, txid)?)?;
+    // The node supplies this hex; the "requested payments" below come from it, so it must be the named tx.
+    ensure!(
+        original.compute_txid().to_string().eq_ignore_ascii_case(txid),
+        "transaction does not match txid {txid}"
+    );
     let scripts = own_scripts(&w);
     let payments: Vec<(ScriptBuf, u64)> = original
         .output
@@ -388,4 +402,16 @@ pub(crate) fn broadcast_psbt(core: &Core, mut psbt: Psbt) -> Result<String> {
     sign::finalize(&mut psbt)?;
     let tx = psbt.extract_tx().map_err(|e| anyhow!("cannot extract transaction: {e}"))?;
     Ok(core.broadcast(&serialize_hex(&tx))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_fee_is_capped_absolutely() {
+        assert_eq!(max_fee(10.0, 150), 4_000);
+        // A 100 000 sat/vB rate would allow 30 M sat; the cap holds at 0.1 BTC, so 0.2 BTC never passes.
+        assert_eq!(max_fee(100_000.0, 150), MAX_ABSOLUTE_FEE);
+    }
 }

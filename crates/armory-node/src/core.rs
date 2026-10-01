@@ -36,6 +36,9 @@ pub enum NodeError {
 
 pub type Result<T> = std::result::Result<T, NodeError>;
 
+/// Fee estimates above this (sat/vB) are treated as a lying or broken node.
+const MAX_ESTIMATE_SAT_VB: f64 = 1000.0;
+
 /// Core's chain name for a network (`getblockchaininfo.chain`).
 pub fn chain_name(n: Network) -> &'static str {
     match n {
@@ -427,6 +430,11 @@ impl Core {
         let ni = self.rpc.call(None, "getnetworkinfo", json!([]))?;
         let floor = ni["relayfee"].as_f64().unwrap_or(0.00001) * 1e5; // BTC/kvB -> sat/vB
         let est = e["feerate"].as_f64().map(|r| r * 1e5);
+        if est.is_some_and(|r| r > MAX_ESTIMATE_SAT_VB) {
+            return Err(NodeError::Unexpected(
+                "node returned an implausible fee estimate; pass --fee-rate".into(),
+            ));
+        }
         Ok(est.unwrap_or(floor).max(floor))
     }
 
