@@ -192,8 +192,11 @@ chaincode ("new in 1.35", `PBW:861-864`). Default file name: `armory_<ID>_.walle
 
 * No KDF (wallet never had encryption configured): the whole 256 bytes are zero; reader
   tests `bytes[0:44] == 44×00` → `kdf = None` (`PBW:1466-1467`).
-* Corrupt-but-fixable (single byte, §1.5) → corrected 44 bytes written back in place
-  (`PBW:1469-1476`); unfixable → `UnserializeError`.
+* Corrupt-but-fixable (single byte, §1.5) → only the corrected **44 data bytes** are
+  written back at offset 334 (`PBW:1469-1476`), not the checksum; a corrupted checksum
+  byte (for which `verifyChecksum` returns the data unchanged) is tolerated and left on
+  disk forever (unlike address records, which are fully re-serialised, §3.3).
+  Unfixable → `UnserializeError`.
 * `mem` is u64 on disk but `KdfRomix` takes `uint32_t` (`EUh:231`); values ≥2^32 cannot
   occur in valid files.
 * **The KDF block survives decryption**: `changeWalletEncryption(None)` never clears it.
@@ -498,16 +501,17 @@ When a new address is chained from a locked, encrypted parent without the key
   `chainDepth` = number of chain steps from that ancestor (parent pending → copy parent's
   pair and `depth+1`, else parent's own pair and `depth=1`).
 * Resolution on wallet unlock (`PBW:2811-2835` + `PBA:575-600`), in chainIndex order:
-  if the record is pending **and** the previously processed record has
-  `chainIndex > -1` and `depth' = idx − prevIdx > 0`, replace the stored pair with the
+  if the record is pending **and** a previously processed *chained* record exists
+  (`addrObjPrev` is only ever assigned records with `chainIndex > -1`, so imported −2 and
+  root −1 never qualify) and `depth' = idx − prevIdx > 0`, replace the stored pair with the
   previous record's `(IV, encPriv)` and depth with `depth'` ("n2 unlock fix"). Then:
   `plain = AES-CFB-decrypt(kdfKey, pairIV, pairEnc)`; repeat `depth` times
   `plain = ComputeChainedPrivateKey(plain, chaincode)` (pubkey recomputed internally);
   clear pending, set depth=0, `lock(generateIVIfNecessary=True)` — this encrypts with the
   record's *own* in-memory IV: the random IV assigned at creation if the object was never
   reloaded, otherwise (after a file read, where unserialise leaves it empty) a **fresh
-  random IV** — never the stored pair's IV; then unlock, and the wallet rewrites the record (`PBW:2831-2835`). Note the root has chainIndex −1 so pending
-  index 0 always uses its stored pair (the root's).
+  random IV** — never the stored pair's IV; then unlock, and the wallet rewrites the record (`PBW:2831-2835`). Consequently a pending index-0 record
+  always keeps its stored (root-derived) pair.
 
 ### 6.6 Watching-only
 Header bit 1 set, header bit 0 clear, KDF block zero; every record has bit 0 clear, empty
@@ -696,8 +700,9 @@ if exists(backupFlag) && exists(mainFlag): copy main→backup; remove both     #
 elif exists(mainFlag):   copy backup→main; remove(mainFlag)                  # main may be corrupt
 elif exists(backupFlag): copy main→backup; remove(backupFlag)                # backup update interrupted
 ```
-(The "both flags" case cannot arise from the step order above except via the
-`interruptTest2` hook; it treats main as good.) Test coverage: `testPyBtcWallet.py:283-343`.
+The "both flags" state arises when the process dies between `touch(backupFlag)` and
+`remove(mainFlag)` in step 4 (`PBW:2291-2296`; simulated by `interruptTest2`); main is
+complete and fsynced at that point, so copying main→backup is correct. Test coverage: `testPyBtcWallet.py:283-343`.
 
 ---
 
