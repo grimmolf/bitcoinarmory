@@ -63,7 +63,10 @@ fn sync_dir(p: &Path) -> Result<()> {
 
 /// Write `data` to `path` atomically with mode 0600.
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
-    let tmp = suffixed_path(path, "tmpwrite");
+    // Not a `.wallet` name, so a leftover temp file is never discovered as a wallet.
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
     {
         let mut opts = OpenOptions::new();
         opts.create(true).truncate(true).write(true);
@@ -175,15 +178,18 @@ impl WalletFile {
     }
 
     /// `walletFileSafeUpdate`, with whole-file atomic replacement of each copy.
+    ///
+    /// Armory needed the main-file flag because it appended in place; with atomic renames the
+    /// main file is always either the old or the new version, so only the backup flag is used.
+    /// After a crash at any point the recovery converges on the main file (a lone backup flag
+    /// means "copy main to backup", in this implementation and in Armory 0.93 alike).
     pub fn save(&mut self) -> Result<()> {
         let bytes = self.wallet.serialize();
         if self.paths.main.exists() {
             consistency_check(&self.paths)?;
         }
-        touch(&self.paths.main_flag)?;
-        atomic_write(&self.paths.main, &bytes)?;
         touch(&self.paths.backup_flag)?;
-        remove_if_exists(&self.paths.main_flag)?;
+        atomic_write(&self.paths.main, &bytes)?;
         atomic_write(&self.paths.backup, &bytes)?;
         remove_if_exists(&self.paths.backup_flag)?;
         self.wallet.repaired = false;

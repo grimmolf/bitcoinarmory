@@ -241,8 +241,8 @@ fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
             });
         }
         WalletCmd::Check { id, keys } => {
-            let f = app::open_wallet(ctx, &id)?;
-            let r = app::check_wallet(ctx, &f, keys)?;
+            let mut f = app::open_wallet(ctx, &id)?;
+            let r = app::check_wallet(ctx, &mut f, keys)?;
             print(json, &r, |r| {
                 format!(
                     "Wallet {}: OK. {} chained addresses verified{}.",
@@ -280,7 +280,7 @@ fn address(ctx: &Context, json: bool, cmd: AddressCmd) -> Result<()> {
         }
         AddressCmd::New { id, pool } => {
             let mut f = app::open_wallet(ctx, &id)?;
-            let a = app::new_address(ctx, &mut f, pool)?;
+            let a = app::new_address(&mut f, pool)?;
             print(json, &a, |a| a.address.clone());
         }
         AddressCmd::Show { address } => {
@@ -309,8 +309,8 @@ fn address(ctx: &Context, json: bool, cmd: AddressCmd) -> Result<()> {
             print(json, &label, |_| format!("Label set for {address}."));
         }
         AddressCmd::Keys { address } => {
-            let (f, h) = app::find_address(ctx, &address)?;
-            let k = app::export_key(ctx, &f, h)?;
+            let (mut f, h) = app::find_address(ctx, &address)?;
+            let k = app::export_key(ctx, &mut f, h)?;
             eprintln!("WARNING: anyone who sees this private key can spend the funds of this address.");
             print(json, &k, |k| {
                 format!(

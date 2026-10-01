@@ -73,7 +73,7 @@ Layering rule: `crypto` ← `wallet` ← `tx` ← `node` ← `armory`. Lower cra
 
 Spec 05 §5.3 is adopted as is. Config lives in `~/.config/armory/armory.toml` (macOS:
 `~/Library/Application Support/Armory/`). Wallets live in `<data>/<network>/wallets/`, with the directory 0700 and
-files 0600; the program refuses to load a world-readable wallet unless `--allow-insecure-perms` is given (#281).
+files 0600; the program refuses to modify a wallet file that other users can read and tells the user to `chmod 600` it (#281).
 `--datadir` puts everything under one root for air-gapped USB use. Legacy `~/.armory` is detected and its wallets
 **copied**, never moved. Config precedence is CLI > env (`ARMORY_*`) > file > default (#288).
 
@@ -100,6 +100,8 @@ files 0600; the program refuses to load a world-readable wallet unless `--allow-
 | USTX (all 3 layouts), lockbox (v0/v1), public-key block, promissory note, signed-message blocks | yes | newest layout, 80-column armour |
 | `multisigs.txt` | yes | no (lockboxes move to `lockboxes.toml`; export to ASCII blocks remains) |
 | `ArmorySettings.txt` | import once | no |
+| Passphrase change on an encrypted wallet | — | recalibrates the KDF parameters (Armory 0.93 silently kept the old ones, spec 01a D2); the file stays readable by Armory |
+| Watching-only copy | — | IVs are wiped (Armory 0.93 kept them by mistake and cleared them on the next read, spec 01a D1) |
 | TxDP (pre-0.92) | no | no |
 | goatpig `.lmdb` wallets | roadmap | no |
 

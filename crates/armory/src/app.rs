@@ -73,7 +73,7 @@ pub fn summary(f: &WalletFile) -> WalletSummary {
 pub fn list_wallets(ctx: &Context) -> Result<Vec<WalletFile>> {
     let mut out = Vec::new();
     for p in store::discover(&ctx.wallet_dir()?)? {
-        match WalletFile::open(&p) {
+        match WalletFile::open_read_only(&p) {
             Ok(f) if f.wallet.network == ctx.network.legacy() => out.push(f),
             Ok(_) => {}
             Err(e) => eprintln!("warning: skipping {}: {e}", p.display()),
@@ -82,28 +82,34 @@ pub fn list_wallets(ctx: &Context) -> Result<Vec<WalletFile>> {
     Ok(out)
 }
 
-/// Find a wallet by ID (or unique ID prefix).
+/// Find a wallet by ID (or unique ID prefix) and open it for writing (consistency and
+/// permission checks run here, not when listing).
 pub fn open_wallet(ctx: &Context, id: &str) -> Result<WalletFile> {
     let mut matches: Vec<WalletFile> =
         list_wallets(ctx)?.into_iter().filter(|f| f.wallet.id().starts_with(id)).collect();
     match matches.len() {
         0 => bail!("no wallet with ID {id} on {}", ctx.network.dir_name()),
-        1 => Ok(matches.remove(0)),
+        1 => Ok(WalletFile::open(&matches.remove(0).paths.main)?),
         _ => bail!("wallet ID prefix {id} is ambiguous"),
     }
 }
 
-/// Unlock if encrypted: returns the AES key, or `None` for unencrypted wallets.
-pub fn unlock(ctx: &Context, w: &LegacyWallet) -> Result<Option<Zeroizing<Vec<u8>>>> {
-    if !w.is_encrypted() {
+/// Unlock if encrypted: returns the AES key, or `None` for unencrypted wallets. Records created
+/// while the wallet was locked are resolved and saved, as Armory did on unlock.
+pub fn unlock(ctx: &Context, f: &mut WalletFile) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    if !f.wallet.is_encrypted() {
         return Ok(None);
     }
-    let pass = ctx.passphrase(&format!("Passphrase for wallet {}: ", w.id()))?;
-    match w.unlock(pass.as_bytes()) {
-        Ok(k) => Ok(Some(k)),
-        Err(WErr::WrongPassphrase) => Err(anyhow!(WErr::WrongPassphrase)),
-        Err(e) => Err(e.into()),
+    let pass = ctx.passphrase(&format!("Passphrase for wallet {}: ", f.wallet.id()))?;
+    let key = match f.wallet.unlock(pass.as_bytes()) {
+        Ok(k) => k,
+        Err(WErr::WrongPassphrase) => return Err(anyhow!(WErr::WrongPassphrase)),
+        Err(e) => return Err(e.into()),
+    };
+    if f.wallet.materialise_pending(&key)? > 0 {
+        f.save()?;
     }
+    Ok(Some(key))
 }
 
 pub struct CreateOptions<'a> {
@@ -181,11 +187,10 @@ fn info(
 }
 
 /// Next unused receive address; refills the pool and saves the file (fsync) before returning.
-pub fn new_address(ctx: &Context, f: &mut WalletFile, pool: Option<usize>) -> Result<AddressInfo> {
-    let key =
-        if f.wallet.is_encrypted() && !f.wallet.is_watching_only() { unlock(ctx, &f.wallet)? } else { None };
+/// Never needs the passphrase: on a locked wallet new keys are created as pending records.
+pub fn new_address(f: &mut WalletFile, pool: Option<usize>) -> Result<AddressInfo> {
     let pool = pool.unwrap_or(f.wallet.network.default_pool_size());
-    let idx = f.wallet.next_unused(pool, key.as_deref().map(|k| &k[..]))?;
+    let idx = f.wallet.next_unused(pool, None)?;
     f.save()?;
     let r = f.wallet.record(idx).ok_or_else(|| anyhow!("index {idx} missing"))?;
     Ok(info(&f.wallet, r, &f.wallet.address_comments()))
@@ -217,7 +222,7 @@ pub fn find_address(ctx: &Context, address: &str) -> Result<(WalletFile, [u8; 20
     for f in list_wallets(ctx)? {
         if let Ok(h) = decode_address(&f, address) {
             if f.wallet.record_by_hash160(&h).is_some() {
-                return Ok((f, h));
+                return Ok((WalletFile::open(&f.paths.main)?, h));
             }
         }
     }
@@ -237,8 +242,8 @@ pub struct KeyExport {
     pub public_key_hex: String,
 }
 
-pub fn export_key(ctx: &Context, f: &WalletFile, h: [u8; 20]) -> Result<KeyExport> {
-    let key = unlock(ctx, &f.wallet)?;
+pub fn export_key(ctx: &Context, f: &mut WalletFile, h: [u8; 20]) -> Result<KeyExport> {
+    let key = unlock(ctx, f)?;
     let k = f.wallet.private_key_for(&h, key.as_deref().map(|k| &k[..]))?;
     let pubk = armory_crypto::chain::public_key(&k)?;
     debug_assert_eq!(hash160(&pubk), h);
@@ -256,7 +261,7 @@ fn armory_crypto_hex(b: &[u8]) -> String {
 
 pub fn import_key(ctx: &Context, f: &mut WalletFile, text: &str) -> Result<String> {
     let k = keytext::parse_private_key(text, f.wallet.network)?;
-    let key = unlock(ctx, &f.wallet)?;
+    let key = unlock(ctx, f)?;
     let h = f.wallet.import_private_key(&k, key.as_deref().map(|k| &k[..]))?;
     f.save()?;
     Ok(f.wallet.network.p2pkh_address(&h))
@@ -291,7 +296,7 @@ pub fn change_passphrase(
             if !f.wallet.is_encrypted() {
                 bail!("wallet is not encrypted; use `set`");
             }
-            unlock(ctx, &f.wallet)?
+            unlock(ctx, f)?
         }
     };
     let new_pass = match what {
@@ -313,8 +318,8 @@ pub struct CheckReport {
     pub recovery: String,
 }
 
-pub fn check_wallet(ctx: &Context, f: &WalletFile, with_keys: bool) -> Result<CheckReport> {
-    let key = if with_keys && !f.wallet.is_watching_only() { unlock(ctx, &f.wallet)? } else { None };
+pub fn check_wallet(ctx: &Context, f: &mut WalletFile, with_keys: bool) -> Result<CheckReport> {
+    let key = if with_keys && !f.wallet.is_watching_only() { unlock(ctx, f)? } else { None };
     let n = f.wallet.verify_chain(key.as_deref().map(|k| &k[..]))?;
     Ok(CheckReport {
         id: f.wallet.id(),

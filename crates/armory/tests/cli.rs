@@ -135,3 +135,33 @@ fn private_files() {
         }
     }
 }
+
+#[test]
+fn receive_on_locked_wallet_needs_no_passphrase() {
+    let env = Env::new();
+    env.ok(&["wallet", "import", s(&fixture("armory_DZMmtb2v_.wallet"))]);
+    let pw = env.file("pw", "pw\n");
+    env.ok(&[
+        "wallet",
+        "passphrase",
+        "DZMmtb2v",
+        "set",
+        "--kdf-target-ms",
+        "20",
+        "--passphrase-file",
+        s(&pw),
+    ]);
+    // Twelve new addresses: the pool grows past the existing keys while locked.
+    for _ in 0..12 {
+        env.ok(&["address", "new", "DZMmtb2v"]);
+    }
+    let path = env.dir.path().join("testnet3/wallets/armory_DZMmtb2v_.wallet");
+    let w = armory_wallet::LegacyWallet::parse(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(w.chained().values().any(|r| r.flags.pending));
+    // Unlocking resolves and rewrites the pending records.
+    env.ok(&["wallet", "check", "DZMmtb2v", "--keys", "--passphrase-file", s(&pw)]);
+    let w = armory_wallet::LegacyWallet::parse(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(w.chained().values().all(|r| !r.flags.pending));
+    let key = w.unlock(b"pw").unwrap();
+    assert_eq!(w.verify_chain(Some(&key)).unwrap() as i64, w.last_computed_index() + 1);
+}

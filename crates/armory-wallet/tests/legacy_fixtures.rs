@@ -299,3 +299,23 @@ fn file_store_and_recovery() {
         assert!(matches!(WalletFile::open(&path), Err(Error::InsecurePermissions { .. })));
     }
 }
+
+#[test]
+fn crash_after_main_write_keeps_new_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, w) = load("vzgEfJrJ");
+    let path = dir.path().join(w.default_file_name());
+    let mut f = WalletFile::create(&path, w).unwrap();
+    let paths = WalletPaths::new(&path);
+    let stale_backup = std::fs::read(&paths.backup).unwrap();
+    f.wallet.set_labels("After crash", "").unwrap();
+    f.save().unwrap();
+    // State after a crash between writing main and writing the backup.
+    std::fs::write(&paths.backup, &stale_backup).unwrap();
+    std::fs::write(&paths.backup_flag, b"").unwrap();
+    let f = WalletFile::open(&path).unwrap();
+    assert_eq!(f.recovery, Recovery::RefreshedBackupFromMain);
+    assert_eq!(f.wallet.label(), "After crash");
+    assert_eq!(std::fs::read(&paths.main).unwrap(), std::fs::read(&paths.backup).unwrap());
+    assert!(armory_wallet::store::discover(dir.path()).unwrap().len() == 1);
+}
