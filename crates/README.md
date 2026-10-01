@@ -8,7 +8,7 @@ The Rust rebuild of Armory for Fedora Linux and macOS. Design and status:
 | `armory-crypto` | Byte-exact legacy primitives: Armory HMAC, checksums, Easy16, ROMix KDF, AES, 1.35 key chain, Shamir, SecurePrint |
 | `armory-wallet` | Modern v2 wallets (BIP39/BIP32, BIP84 SegWit + BIP86 Taproot accounts, descriptors, Argon2id + XChaCha20-Poly1305) and legacy v1.35 `.wallet` files (byte-compatible read/write, migration) |
 | `armory-node` | Bitcoin Core JSON-RPC backend: watch-only descriptor wallets, balances, history, UTXOs, fees, broadcast |
-| `armory` | The `armory` command-line program (TUI to follow) |
+| `armory` | The `armory` program: command line and full-screen terminal interface (`armory` / `armory tui`) |
 
 ## Build and test
 
@@ -55,6 +55,45 @@ armory tx broadcast tx.psbt                                  # (online machine)
 armory wallet sweep-legacy <ID>                              # Armory 0.93 funds -> SegWit
 ```
 
+## Terminal interface
+
+Run `armory` (or `armory tui`) with the same global options as the commands (`--network`, `--datadir`,
+the node options; values from `armory.toml` apply too). `1`–`0` or Tab switch screens, `[` `]` switch
+wallet, `?` shows the keys of the screen, `:` runs any `armory` command and shows its output.
+
+The TUI never has a second implementation of an action. Transactions go through the shared
+prepare/execute operations (`src/ops.rs`); every other action runs the very same CLI command in-process,
+with its output captured and its prompts answered from the TUI's dialogs (`src/io.rs`). Displays read
+the wallet files and Bitcoin Core directly.
+
+| Command | TUI |
+|---|---|
+| `wallet list` / `show` | Overview (1), Wallets (2) |
+| `wallet create` / `restore` / `migrate` | Wallets: `c` / `R` / `m` |
+| `wallet rename` / `passphrase` / `add-account` | Wallets: `e` / `p` / `A` |
+| `wallet sync` | Wallets or Overview: `s` |
+| `wallet descriptors [--private]` / `check` | Wallets: `d` / `D` / `k` |
+| `wallet show-seed` / `export-keys` / `export-watchonly` / `remove` | Wallets: `S` / `X` / `E` / `x` |
+| `wallet sweep-legacy` | Wallets: `L` |
+| `address new` / `list` / `label` / `qr` | Receive (3): `n` / table / `l` / QR panel and Enter |
+| `uri create` | Receive: `u` |
+| `send` (`--to`, `--max`, `--account`, fees, `--comment`, `--unsigned-out`, `--uri`) | Send (4): `n`, `u`, Enter on a contact |
+| `addressbook list` / `add` / `remove` | Send: table / `b` / `d` |
+| `balance` / `history [--csv]` / `utxos` | Overview, History (5): table / `e` / `v` |
+| `tx comment` / `bump-fee` / `abandon` | History: `c` / `f` / `x` |
+| `tx show` / `sign` / `broadcast` / `convert` / `combine` | Offline (6): `o` or `p` / `s` / `b` / `c` / `m` |
+| `lockbox export-key` / `create` / `import` / `export` | Lockboxes (7): `k` / `n` / `i` / `e` |
+| `lockbox list` / `show` / `address` / `sync` / `balance` / `utxos` / `spend` | Lockboxes: list / details / `a` / `s` / `b` / `u` / `p` |
+| `backup paper` / `fragments` | Backup (8): `p` / `f` |
+| `restore paper` / `fragments` (and `--test`) | Backup: `R` / `F` (`t` / `T`) |
+| `message sign` / `verify` (and `--block`) | Tools (9): `s` / `v` / `b` |
+| `sweep` / `tools key-info` / `tools decode-tx` / `uri parse` | Tools: `k` / `i` / `d` / `u` |
+| `legacy …` (Armory 0.93 files: inspect, keys, byte-compatible edits) | Tools: `l` lists them; the commands run from `:` |
+| `node status` | Overview, Settings (0): `t` |
+| `config set` (network, node connection) | Settings: `n` / `c` ("save as defaults") |
+| `about` | Settings: `a` |
+| `completions`, `manpage` | command line only (shell integration) |
+
 ## Status
 
 | Milestone | State |
@@ -63,9 +102,9 @@ armory wallet sweep-legacy <ID>                              # Armory 0.93 funds
 | M1 legacy v1.35 wallets (`armory legacy …`) | done |
 | M1b modern wallets: BIP39/BIP84/BIP86, encryption, migration, descriptors | done |
 | M2 paper / SecurePrint / fragmented backups (create, restore, `--test`; Armory 0.93 sheets and fragments restore) | done |
-| M3 Bitcoin Core backend (`node status`, `wallet sync`, `balance`, `history --csv`, `utxos`) | done against a mock Core RPC server; not yet run against a real regtest node |
-| M4 spending: `send` (incl. `--max`, RBF), `tx show/sign/broadcast` (offline PSBT), `wallet sweep-legacy` | done; signing verified locally for P2WPKH, P2TR and legacy P2PKH; Core funding tested against the mock only. Legacy USTX import/export not yet |
-| M5 lockboxes, messages | not started |
-| M6 TUI | not started |
+| M3 Bitcoin Core backend (`node status`, `wallet sync`, `balance`, `history --csv`, `utxos`) | done; end-to-end against `bitcoind -regtest` 29.1 in CI |
+| M4 spending: `send` (incl. `--max`, BIP21, RBF bump, abandon), offline PSBT, Armory 0.93 offline transactions (USTX), `wallet sweep-legacy`, `sweep` (private keys) | done; regtest end-to-end in CI |
+| M5 lockboxes (SegWit multisig, Armory 0.93 lockbox import), messages (BIP322, BIP137, Armory signed blocks), address book | done |
+| M6 TUI | done: every command reachable (table above); tests render every screen and drive dialogs, incl. a payment against regtest Core |
 | M7 goatpig `.lmdb` import | not started |
-| M8 daemon, packaging | not started |
+| M8 packaging (Fedora RPM, Homebrew), daemon | packaging: see `packaging/`; daemon not started |
