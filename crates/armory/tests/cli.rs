@@ -691,3 +691,68 @@ fn lockbox_workflow() {
     armory_wallet::sign::finalize(&mut done).unwrap();
     assert_eq!(done.extract_tx().unwrap().input[0].witness.len(), 4);
 }
+
+#[test]
+fn armory_093_offline_transaction_files() {
+    let env = Env::new();
+    let signed = fixture("armory_8gRmZv48_.signed.tx");
+    let shown = env.ok(&["tx", "show", s(&signed)]);
+    assert!(shown.contains("signed:  1/1"), "{shown}");
+    // Strip the signature, hand it to a migrated copy of the 0.93 wallet that owns the key.
+    let mut psbt = armory_wallet::ustx::Ustx::parse(
+        &std::fs::read_to_string(&signed).unwrap(),
+        bitcoin::Network::Testnet,
+    )
+    .unwrap()
+    .to_psbt()
+    .unwrap();
+    psbt.inputs[0].partial_sigs.clear();
+    let block = armory_wallet::ustx::Ustx::from_psbt(&{
+        let mut p = psbt.clone();
+        let k = armory_wallet::ustx::Ustx::parse(
+            &std::fs::read_to_string(&signed).unwrap(),
+            bitcoin::Network::Testnet,
+        )
+        .unwrap();
+        let pk = bitcoin::PublicKey::from_slice(&k.inputs[0].keys[0].0).unwrap();
+        p.inputs[0].bip32_derivation.insert(pk.inner, Default::default());
+        p
+    })
+    .unwrap()
+    .to_block(bitcoin::Network::Testnet);
+    let unsigned = env.file("armory_8gRmZv48_.unsigned.tx", &block);
+    let v: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "--json",
+        "wallet",
+        "migrate",
+        s(&fixture("armory_GDHFnMQ2_.wallet")),
+        "--no-encrypt",
+    ]))
+    .unwrap();
+    let id = v["id"].as_str().unwrap();
+    env.ok(&["tx", "sign", s(&unsigned), "--wallet", id]);
+    let text = std::fs::read_to_string(&unsigned).unwrap();
+    assert!(text.starts_with("=====TXSIGCOLLECT-8gRmZv48"), "signed file stays in Armory format");
+    let mut p =
+        armory_wallet::ustx::Ustx::parse(&text, bitcoin::Network::Testnet).unwrap().to_psbt().unwrap();
+    let prev = p.inputs[0].non_witness_utxo.clone().unwrap().output[0].clone();
+    armory_wallet::sign::finalize(&mut p).unwrap();
+    let tx = p.extract_tx().unwrap();
+    // A fresh (RFC 6979) signature: a different txid than 2014's, but it must verify.
+    use bitcoin::hashes::Hash;
+    let parts: Vec<Vec<u8>> = tx.input[0]
+        .script_sig
+        .instructions()
+        .map(|i| i.unwrap().push_bytes().unwrap().as_bytes().to_vec())
+        .collect();
+    let sig = bitcoin::ecdsa::Signature::from_slice(&parts[0]).unwrap();
+    let pk = bitcoin::PublicKey::from_slice(&parts[1]).unwrap();
+    let h =
+        bitcoin::sighash::SighashCache::new(&tx).legacy_signature_hash(0, &prev.script_pubkey, 1).unwrap();
+    bitcoin::secp256k1::Secp256k1::verification_only()
+        .verify_ecdsa(&bitcoin::secp256k1::Message::from_digest(h.to_byte_array()), &sig.signature, &pk.inner)
+        .unwrap();
+    let out = env.dir.path().join("x.psbt");
+    env.ok(&["tx", "convert", s(&unsigned), "--to", "psbt", "-o", s(&out)]);
+    assert!(env.ok(&["tx", "show", s(&out)]).contains("signed:  1/1"));
+}

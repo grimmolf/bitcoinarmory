@@ -11,6 +11,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use armory_node::core::{Core, DEFAULT_GAP, FundRequest, Rescan};
 use armory_wallet::modern::{AccountKind, ModernWallet};
 use armory_wallet::sign::{self, Expected, PsbtSummary};
+use armory_wallet::ustx::Ustx;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::hashes::Hash;
 use bitcoin::psbt::Psbt;
@@ -75,6 +76,13 @@ pub struct SweepArgs {
     yes: bool,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum TxFormat {
+    Psbt,
+    /// Armory 0.93 TXSIGCOLLECT block.
+    Armory,
+}
+
 #[derive(Subcommand)]
 pub enum TxCmd {
     /// Show a PSBT file.
@@ -92,6 +100,14 @@ pub enum TxCmd {
         #[arg(long, short)]
         output: Option<PathBuf>,
     },
+    /// Convert between PSBT and Armory 0.93 offline-transaction (TXSIGCOLLECT) files.
+    Convert {
+        file: PathBuf,
+        #[arg(long, value_enum)]
+        to: TxFormat,
+        #[arg(long, short)]
+        output: PathBuf,
+    },
     /// Merge the signatures of several copies of the same PSBT (multisig).
     Combine {
         files: Vec<PathBuf>,
@@ -102,12 +118,28 @@ pub enum TxCmd {
     Broadcast { file: PathBuf },
 }
 
-pub fn read_psbt(path: &Path) -> Result<Psbt> {
+/// Read a PSBT (binary or base64) or an Armory 0.93 `TXSIGCOLLECT` file (converted to a PSBT).
+/// The flag is true for Armory files.
+pub fn read_tx_file(path: &Path, network: bitcoin::Network) -> Result<(Psbt, bool)> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     if bytes.starts_with(b"psbt\xff") {
-        return Ok(Psbt::deserialize(&bytes)?);
+        return Ok((Psbt::deserialize(&bytes)?, false));
     }
-    Ok(Psbt::from_str(String::from_utf8_lossy(&bytes).trim())?)
+    let text = String::from_utf8_lossy(&bytes);
+    if text.contains("=====TXSIGCOLLECT") {
+        return Ok((Ustx::parse(&text, network)?.to_psbt()?, true));
+    }
+    Ok((Psbt::from_str(text.trim())?, false))
+}
+
+pub fn read_psbt(path: &Path, network: bitcoin::Network) -> Result<Psbt> {
+    Ok(read_tx_file(path, network)?.0)
+}
+
+fn write_ustx(path: &Path, psbt: &Psbt, network: bitcoin::Network) -> Result<()> {
+    let block = Ustx::from_psbt(psbt)?.to_block(network);
+    armory_wallet::store::atomic_write(path, format!("{block}\n").as_bytes())?;
+    Ok(())
 }
 
 pub(crate) fn write_psbt(path: &Path, psbt: &Psbt) -> Result<()> {
@@ -407,7 +439,7 @@ pub fn sweep_legacy(ctx: &Context, node: &NodeArgs, json: bool, a: SweepArgs) ->
 pub fn tx(ctx: &Context, node: &NodeArgs, json: bool, cmd: TxCmd) -> Result<()> {
     match cmd {
         TxCmd::Show { file, wallet } => {
-            let psbt = read_psbt(&file)?;
+            let psbt = read_psbt(&file, ctx.network.bitcoin())?;
             let (network, scripts) = match wallet {
                 Some(id) => {
                     let (_, w) = m::open(ctx, &id)?;
@@ -420,7 +452,7 @@ pub fn tx(ctx: &Context, node: &NodeArgs, json: bool, cmd: TxCmd) -> Result<()> 
         }
         TxCmd::Sign { file, wallet, output } => {
             let (_, w) = m::open(ctx, &wallet)?;
-            let mut psbt = read_psbt(&file)?;
+            let (mut psbt, was_ustx) = read_tx_file(&file, ctx.network.bitcoin())?;
             let scripts = own_scripts(&w);
             eprintln!("{}", summary_text(&sign::summarize(&psbt, w.network, &|x| scripts.contains(x))));
             let (u, _) = m::unlock(ctx, &w)?;
@@ -429,17 +461,31 @@ pub fn tx(ctx: &Context, node: &NodeArgs, json: bool, cmd: TxCmd) -> Result<()> 
                 bail!("wallet {} has no keys for any input of this transaction", w.id);
             }
             let out = output.unwrap_or(file);
-            write_psbt(&out, &psbt)?;
+            if was_ustx {
+                write_ustx(&out, &psbt, w.network)?; // hand an Armory file back in Armory format
+            } else {
+                write_psbt(&out, &psbt)?;
+            }
             print(json, &serde_json::json!({"signed_inputs": n, "file": out}), |_| {
                 format!("Signed {n} input(s); wrote {}.", out.display())
             });
         }
+        TxCmd::Convert { file, to, output } => {
+            let net = ctx.network.bitcoin();
+            let psbt = read_psbt(&file, net)?;
+            match to {
+                TxFormat::Psbt => write_psbt(&output, &psbt)?,
+                TxFormat::Armory => write_ustx(&output, &psbt, net)?,
+            }
+            print(json, &output, |o| format!("Wrote {}.", o.display()));
+        }
         TxCmd::Combine { files, output } => {
             let mut it = files.iter();
             let first = it.next().ok_or_else(|| anyhow!("give at least two PSBT files"))?;
-            let mut psbt = read_psbt(first)?;
+            let mut psbt = read_psbt(first, ctx.network.bitcoin())?;
             for f in it {
-                psbt.combine(read_psbt(f)?).map_err(|e| anyhow!("{}: {e}", f.display()))?;
+                psbt.combine(read_psbt(f, ctx.network.bitcoin())?)
+                    .map_err(|e| anyhow!("{}: {e}", f.display()))?;
             }
             write_psbt(&output, &psbt)?;
             let s = sign::summarize(&psbt, ctx.network.bitcoin(), &|_| false);
@@ -453,7 +499,7 @@ Wrote {}.",
             });
         }
         TxCmd::Broadcast { file } => {
-            let mut psbt = read_psbt(&file)?;
+            let mut psbt = read_psbt(&file, ctx.network.bitcoin())?;
             sign::finalize(&mut psbt)?;
             let tx = psbt.extract_tx().map_err(|e| anyhow!("cannot extract transaction: {e}"))?;
             let core = Core::new(&node.config(), ctx.network.bitcoin());
