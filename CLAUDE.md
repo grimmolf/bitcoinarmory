@@ -14,7 +14,13 @@ Start with [`crates/README.md`](crates/README.md) (usage, the command → TUI ke
 
 CLI and TUI are feature-complete against the project's own parity map:
 [`docs/rust-rebuild/00-feature-evaluation.md`](docs/rust-rebuild/00-feature-evaluation.md) §7 lists every row as
-delivered or deferred (with the reason). CI is green on all jobs. No pull request has been opened.
+delivered or deferred (with the reason). CI is green on all jobs, including the `regtest` job against Bitcoin
+Core 31.1 and the `release` dry run (Linux x86_64, macOS arm64 and x86_64 archives). No pull request has been opened.
+
+A read-only security review of the money paths
+([`docs/rust-rebuild/09-security-review.md`](docs/rust-rebuild/09-security-review.md)) found four defects, all
+fixed (`0dcf84b5`, `52c7a8b6`); its eight concerns (C1–C8) are open. **Not for mainnet** until a human has read
+`sign.rs`, `modern.rs` and `store.rs` and closed or accepted those concerns.
 
 ## Build, test, check — run all before every commit
 
@@ -85,24 +91,18 @@ Optional, needs local tools:
 
 ## Next work (prioritised)
 
-1. **goatpig "0.97" `.lmdb` import** — research done: [`docs/rust-rebuild/specs/08-goatpig-lmdb-format.md`](docs/rust-rebuild/specs/08-goatpig-lmdb-format.md)
-   (read its "Findings" section first). Steps:
-   1. `git clone https://github.com/goatpig/BitcoinArmory` (branch `dev`, spec written against `d0294d5`);
-      build an oracle like `tools/legacy-oracle/` that creates sample `.lmdb` wallets with known passphrases
-      (legacy-chain default wallet, BIP39 restore, watching-only, empty and non-empty control passphrase) and
-      dumps expected IDs/addresses. This also settles the spec's open questions (AES-CBC padding, HMAC argument
-      order, host-endian counters).
-   2. Reader in `armory-wallet` (new module, read-only; **always open a copy** — goatpig mutates the file on open).
-      Needs an LMDB reader crate (e.g. `heed`/`lmdb-rkv`) or a minimal read-only LMDB page parser.
-   3. Mapping: legacy chain → `legacy-1.35` account (needs **per-address types**: compressed/P2WPKH/P2SH-P2WPKH
-      on the legacy chain — not modelled yet); BIP39 → restore + BIP84 (+ new BIP44/BIP49 account kinds);
-      salted/ECDH accounts → refuse with a clear message or key-by-key export.
-   4. CLI `wallet migrate --from-lmdb FILE`, TUI Wallets `m` form option, tests, §7 update.
+1. **Review concerns C1–C8** in [`docs/rust-rebuild/09-security-review.md`](docs/rust-rebuild/09-security-review.md):
+   AAD binds too little of the v2 public data (C4), zeroization gaps (C5), `.bak` twins never
+   permission-checked and `load` falls back on `UnsupportedVersion` (C6), cosigner script/sighash laxity (C1),
+   no confirm step in offline `tx sign` (C2). Each needs a human decision or a test.
 2. Smaller deferred rows (feature-evaluation §7): WM-17 damaged-wallet recovery, AR-02 no-backup warning,
    BK-03 PDF sheets, MS-12..14 promissory notes (fixtures exist in `fixtures/legacy/`), TL-03 EC calculator,
-   `config get/reset`, `bitcoin:` URI handler.
-3. Release automation: tag-triggered workflow running `packaging/dist.sh` per target, Homebrew sha256.
-4. Phase 3: `armory daemon` (JSON-RPC, decision D-5 in `00-feature-evaluation.md`).
+   `config get/reset`, `bitcoin:` URI handler (a TUI cannot be an OS URI target; probably never).
+3. Phase 3: `armory daemon` (JSON-RPC, decision D-5 in `00-feature-evaluation.md`).
+4. **Dropped by the owner (2026-10-01):** goatpig "0.97" `.lmdb` import (M7). The owner has no legacy wallets.
+   The research in [`specs/08-goatpig-lmdb-format.md`](docs/rust-rebuild/specs/08-goatpig-lmdb-format.md) stays for
+   anyone who does. The legacy-compat code (`armory-crypto` primitives, `legacy.rs`, `ustx.rs`, 0.93 lockbox and
+   backup import, `tools/legacy-oracle/`) is kept because it is done and tested; it is a candidate for removal.
 
 ## Gotchas
 
