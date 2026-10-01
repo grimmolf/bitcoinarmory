@@ -1,0 +1,23 @@
+[package]
+name = "armory-wallet"
+description = "Legacy Armory v1.35 wallet files, paper and fragmented backups"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+armory-crypto.workspace = true
+bitcoin.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
