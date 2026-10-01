@@ -87,6 +87,19 @@ this spec only needs `wallet_id(priv, chain)`.
 
 ## 1. Easy16 encoding and single-sheet paper backups
 
+### 1.0 Entry points (UI flow)
+- New-wallet wizard page 4 "Backup Wallet" (`ui/Wizards.py:251-257`, warning if skipped `138-150`)
+  and the wallet "Backup" dialog both use `WalletBackupFrame.clickedDoIt` (`ui/WalletFrames.py:952-992`):
+  Single paper / Fragmented paper → `OpenPaperBackupWindow('Single'|'Frag', …)`; digital
+  (decrypted/encrypted wallet copy) → `makeWalletCopy`; individual key list → `DlgShowKeyList`.
+- `OpenPaperBackupWindow` (`qtdialogs.py:7494-7549`): unlock if encrypted, run `DlgPrintBackup` or
+  `DlgFragBackup`, then offer "Verify Your Backup!" → `DlgRestoreSingle` / `DlgRestoreFragged` in
+  **test mode** with `expectWltID = wlt.uniqueIDB58` (nothing written to disk).
+- Restore entry: `DlgUniversalRestoreSelect` (`qtdialogs.py:12143-12240`): radio Single-Sheet /
+  Fragmented / digital-or-WO wallet file / watching-only root data, plus a "test recovery" checkbox.
+- Watch-only root data export: `makeWalletCopy(..., 'PKCC', 'rootpubkey')` and
+  `DlgWODataPrintBackup` (§5). Recovery tool: menu "Fix Damaged Wallet" (`ArmoryQt.py:745`, `3541-3542`).
+
 ### 1.1 Alphabet (`ArmoryUtils.py:2161-2175`)
 ```
 hex   : 0 1 2 3 4 5 6 7 8 9 a b c d e f
@@ -112,9 +125,9 @@ def makeSixteenBytesEasy(b16):
    last1   = nineQuads[8]
    return '  '.join([first4, second4, last1])
 ```
-Exact layout (45 chars): `QQQQ QQQQ QQQQ QQQQ␣␣QQQQ QQQQ QQQQ QQQQ␣␣CCCC` — single spaces inside the
+Exact layout (46 chars): `QQQQ QQQQ QQQQ QQQQ␣␣QQQQ QQQQ QQQQ QQQQ␣␣CCCC` — single spaces inside the
 two 4-quad groups, **two spaces** between groups; the 9th quad `CCCC` is exactly the 2-byte checksum.
-Dialogs tell users "9 columns of 4 characters each" (`qtdialogs.py:7524-7528`, `6993`, `7004`).
+Dialogs tell users "9 columns of 4 characters each" (`qtdialogs.py:7530`, `6997`, `7006`).
 Variant: `DlgShowKeyList` prints the same 36 chars with single spaces between all 9 quads
 (`qtdialogs.py:5458-5473`). Parsers strip all `' '` so both forms are equivalent.
 
@@ -157,7 +170,7 @@ Printed data lines (`7411-7425`):
 where `K, C = binPriv, binChain` (unencrypted) or `binPrivCrypt, binChainCrypt` (SecurePrint, §3) (`7413-7418`).
 Header column (`7240-7245`): `Wallet Version:` = `'1.35' + ('c' if noNeedChaincode else 'a')`,
 `Wallet ID:` (base58 wallet ID), `Wallet Name:`, `Backup Type:` = `Single-Sheet  (Unencrypted)` or
-`Single-Sheet  (SecurePrint™)` (`7230-7233`). So **1.35c = 2 data lines, 1.35a = 4 data lines**.
+`Single-Sheet  (SecurePrint™)` (`7230-7238`). So **1.35c = 2 data lines, 1.35a = 4 data lines**.
 QR code (convenience only) encodes `'\n'.join(Lines)` — the formatted easy16 lines with spaces, no
 prefixes, no SecurePrint code (`qtdialogs.py:7455`).
 
@@ -172,22 +185,22 @@ Other producers of the same 2-line format: `extras/PromoKit.py:105-113` (root ke
 
 ### 1.5 How restore distinguishes 1.35a vs 1.35c — it does not
 `DlgRestoreSingle` (`qtdialogs.py:12280-12600`) makes the **user choose** a radio button
-(`12302-12318`): `Version 1.35 (4 lines)`, `Version 1.35a (4 lines Unencrypted)`,
+(`12305-12318`): `Version 1.35 (4 lines)`, `Version 1.35a (4 lines Unencrypted)`,
 `Version 1.35a (4 lines + SecurePrint™)`, `Version 1.35c (2 lines Unencrypted)` (**default**),
-`Version 1.35c (2 lines + SecurePrint™)`. `changeType` (`12400-12419`) sets
+`Version 1.35c (2 lines + SecurePrint™)`. `changeType` (`12400-12420`) sets
 `visList = [SP, L1, L2, L3, L4]`: 1.35 and 1.35a → `[0,1,1,1,1]`; 1.35a+SP → `[1,1,1,1,1]`;
 1.35c → `[0,1,1,0,0]`; 1.35c+SP → `[1,1,1,0,0]`; `isLongForm = visList[-1]==1`.
 "Version 1.35" is behaviourally identical to 1.35a unencrypted. The only printed hints are the
 `Wallet Version: 1.35a/1.35c` string and the line count; the only *check* is that the user confirms
-the recomputed wallet ID (`12534-12542`) or, in test mode, `verifyRecoveryTestID` (`13785+`).
+the recomputed wallet ID (`12526-12533`) or, in test mode, `verifyRecoveryTestID` (`13785+`).
 (Fragments, by contrast, carry machine-readable type via line count — §4.8.)
 
-Restore algorithm (`verifyUserInput`, `12426-12508`):
+Restore algorithm (`verifyUserInput`, `12425-12508`):
 1. Input mask `'<AAAA\ AAAA\ AAAA\ AAAA\ \ AAAA\ AAAA\ AAAA\ AAAA\ \ AAAA!'` (`12338`): 36 letters,
    forced lowercase.
 2. For each of `nLine = 4 if isLongForm else 2` lines: `readSixteenEasyBytes(text.replace(' ',''))`;
    `Error_2+` or any exception → error dialog naming the line, abort; `Fixed_1` → count it.
-3. If any fixed: warn "Detected N error(s)… verify the Wallet Unique ID" (`12458-12470`).
+3. If any fixed: warn "Detected N error(s)… verify the Wallet Unique ID" (`12465-12476`).
 4. `privKey = L1||L2`; if long form `chain = L3||L4` (`12480-12482`).
 5. If SecurePrint: validate code (§3.3 `checkSecurePrintCode`), `maskKey = KDF(code)`,
    `privKey = unmask(privKey)`, and `chain = unmask(chain)` if long form (`12484-12497`).
@@ -196,7 +209,7 @@ Restore algorithm (`verifyUserInput`, `12426-12508`):
    optional new passphrase, `createNewWallet(plainRootKey, chaincode, …)`, fill 1000 addresses
    (`12502-12600`). Label `'Restored - ' + ID`.
 
-Legacy, unreferenced: `DlgImportPaperWallet` (`qtdialogs.py:4145-4302`) — always 4 lines, no
+Legacy, unreferenced: `DlgImportPaperWallet` (`qtdialogs.py:4145-4303`) — always 4 lines, no
 SecurePrint, treats `Fixed_1`/`No_Checksum` as "corrected"; no code path instantiates it.
 
 ---------------------------------------------------------------------------------------
@@ -224,6 +237,7 @@ bin1 = b; bin2 = reverse(b)
       f = fixChecksumError(bin1, chk)
       if f != '':                        return f
       elif chk == 5df6e0e2 (hash256('')[:4]): return ''      # cannot fire for 2-byte chk
+4. (no step: fall-through from 2 when fixIfNecessary is False, or from 3 when no fix found)
 5. # "ID a checksum byte error":
    h = H(bin1)
    for i in 0..len(chk)-1:
@@ -335,7 +349,7 @@ code  = base58(bin7 || hash256(bin7)[0:1])          # 8 bytes → typically 11 c
 ```
 The code is case-sensitive, deterministic per wallet (reprinting gives the same code), and the same
 for every fragment of a wallet. It is shown on screen only, never printed (user writes it in the red
-"Code:" box drawn at 4.0 in from left on the page, `7326-7349`).
+"Code:" box drawn at 4.0 in from left on the page, `7326-7348`).
 
 ### 3.3 Code validation (`checkSecurePrintCode`, `qtdialogs.py:12257-12278`)
 1. `len(code.strip()) < 9` → "Invalid Code" (reject).
@@ -363,7 +377,7 @@ key32 = X[0..32]
 ### 3.5 Mask / unmask = AES-256-CBC, fixed IV, no padding
 `CryptoAES::EncryptCBC/DecryptCBC` (`EncryptionUtils.cpp:368-420`) use Crypto++
 `CBC_Mode<AES>` with `ProcessData` — no padding, output length = input length, inputs must be a
-multiple of 16 (always 32 or 64 here). Key = KDF output, IV = `SALT`-independent fixed `IV` above.
+multiple of 16 (always 32 or 64 here). Key = KDF output (32 B), IV = the fixed 16-byte `IV` of 3.1.
 What is masked:
 - Single sheet: `binPrivCrypt = AES(priv32)`, `binChainCrypt = AES(chain32)` — two **independent**
   CBC encryptions each starting from IV (`qtdialogs.py:6906-6909`).
@@ -407,7 +421,7 @@ Operations (Python `%` = non-negative remainder; Rust must use `rem_euclid` sema
   `result = add(result, mult(m[0][i]*(-1 if i odd else 1), det(minor(0,i))))`.
 - `mtrxmultvect(m,v)`: `[ sum(mult(m[i][j],v[j]) for j<N) % p for i<M ]`.
 - `mtrxmult(m1,m2)`: bug-compatible — column range uses `N1` (cols of m1), not cols of m2
-  (`2541-2547`); unused by backups, exercised by tests.
+  (`2545-2551`); unused by backups, exercised by tests.
 - `mtrxadjoint(m)[i][j] = ((-1)^(i+j) * det(minor(j,i))) % p` (note transposed minor indices).
 - `mtrxinv(m)[i][j] = divide(adj[i][j], det)`. A singular matrix (det=0, e.g. duplicate x) is **not
   detected**: result is the all-zero matrix (test vector §9.1 depends on this).
@@ -466,7 +480,7 @@ insecureData = SplitSecret(self.securePrint, M, self.maxmaxN)   # maxmaxN = 12  
 ```
 - **Always 12 fragments are computed**, regardless of the chosen N; N only selects how many are
   shown/printed (indices 0..N−1). M ∈ 2..5 (standard) or 2..8 (expert); N ∈ M..6 or M..12
-  (`11742-11765`, `12063-12079`).
+  (`11741-11753`, `11834-11850`).
 - SecurePrint versions: `secureMtrxCrypt[i] = [x, AES_CBC(y)]` with code from `root||chain` (`12113-12121`).
 - `extras/frag_wallet.py` always splits the 64-byte `priv||chain` (`frag_wallet.py:136-137`), so for
   1.35c wallets its fragments differ from GUI fragments; for 1.35a wallets they are identical for the same M.
@@ -476,7 +490,7 @@ insecureData = SplitSecret(self.securePrint, M, self.maxmaxN)   # maxmaxN = 12  
 ComputeFragIDBase58(M, wltIDBin6) = str(M) + base58( hash256(wltIDBin6 || u32_BE(M))[:4] )
 ```
 Displayed as `<FragIDBase58>-#<n>` (n = 1-based fragment number) on printouts (`7249-7259`) and in
-`ReadFragIDLineBin` (`2731`); `DlgFragBackup` labels show `<prefix>-<n>` without `#` (`11908-11909`).
+`ReadFragIDLineBin` (`2731`); `DlgFragBackup` labels show `<prefix>-<n>` without `#` (`11910-11911`).
 [port-generated] `ComputeFragIDBase58(3, 00*6) = "34ZFkPT"`.
 
 ### 4.6 Fragment ID line (hex, not easy16) (`ArmoryUtils.py:2713-2721`)
@@ -490,7 +504,7 @@ Reader (`2725-2737`): `doMask = byte0 > 127`, `M = byte0 & 0x7f`, `fnum = byte1`
 `idBase58 = ComputeFragIDBase58(M, wltID) + '-#' + str(fnum)`. No checksum on the ID line.
 
 ### 4.7 Printed / saved fragment layout
-Printed page (`qtdialogs.py:7381-7405`), saved file (`12015-12045`), and QR (`'\n'.join(Lines)`):
+Printed page (`qtdialogs.py:7381-7404`), saved file (`12015-12045`), and QR (`'\n'.join(Lines)`):
 
 | Prefix | 32-byte Y (1.35c) | 64-byte Y (1.35a) |
 |---|---|---|
@@ -502,9 +516,9 @@ Printed page (`qtdialogs.py:7381-7405`), saved file (`12015-12045`), and QR (`'\
 
 Y is masked if SecurePrint. X is never printed (implicit from the ID byte1).
 Page header: `Wallet Version: 1.35a|c`, `Wallet ID`, `Wallet Name`, `Backup Type: Fragmented Backup (M-of-N) (SecurePrint™|Unencrypted)`,
-`Fragment: <FragIDStr>-#n` (`7246-7260`); text counts "three"/"five" lines (`7287-7290`).
+`Fragment: <FragIDStr>-#n` (`7246-7258`); text counts "three"/"five" lines (`7287-7290`).
 
-Saved `.frag` file (`clickSaveFrag`, `12000-12045`), default name
+Saved `.frag` file (`clickSaveFrag`, `11984-12045`), default name
 `wallet_<wltIDB58>_<FragIDBase58>_num<n>_need<M>.<'secure.' if masked>frag`:
 ```
 Wallet ID:     <wltIDB58>\n
@@ -530,7 +544,7 @@ Input paths:
   If an SP type is selected the code is validated (§3.3); if a non-SP type is selected but the ID's
   first byte > 127 → error "ID field indicates SecurePrint" (`13705-13740`). Lines read with
   `readSixteenEasyBytes`; `fragData = [idBin, line1, line2, ...]`; user confirms `fid`.
-- **File** (`dataLoad`, `13055-13100`): each line `.strip()`ed; if `line[:2].lower()` ∈
+- **File** (`dataLoad`, `13051-13102`): each line `.strip()`ed; if `line[:2].lower()` ∈
   {id,x1..x4,y1..y4,f1..f4} then `fragMap[key] = line[3:].strip().replace(' ','')` (last occurrence
   wins). Count of keys: 9 → x/y (Version 0), 5 → f1..f4 (1.35a), 3 → f1..f2 (1.35c), else abort.
   `fragData[0] = hex_to_binary(fragMap['id'])`; `Error_2+` on any line aborts. (Uppercase letters are
@@ -551,7 +565,7 @@ Input paths:
    (`fnum`) — results are identical for all fragment sets — but must not "fix" anything else.
 6. Restore enabled when `#rows ≥ M` (`13133`).
 
-`processFrags` (`13238-13380`): `maskKey = KDF(code)` if any row masked; for each row,
+`processFrags` (`13240-13385`): `maskKey = KDF(code)` if any row masked; for each row,
 `Y = unmask(Y)` iff that row's ID has the 0x80 flag (mixed masked/unmasked rows allowed);
 `nBytes = {'0':64, 1.35a:64, 1.35c:32}`; if test mode and more than M rows → subset test (below);
 else `SECRET = ReconstructSecret(rows, M, nBytes)` (uses the first M rows in dict order).
@@ -559,7 +573,7 @@ else `SECRET = ReconstructSecret(rows, M, nBytes)` (uses the first M rows in dic
 Then wallet ID confirm / test check, wallet creation as in 1.5. No integrity check exists beyond
 per-line checksums and the human comparing wallet IDs.
 
-Subset testing (`testFragSubsets` `13389-13415`; `createTestingSubsets` `ArmoryUtils.py:2640-2681`;
+Subset testing (`testFragSubsets` `13387-13414`; `createTestingSubsets` `ArmoryUtils.py:2640-2681`;
 `testReconstructSecrets` `2685-2702`): `fragMap` keyed by `int_BE(X) − 1` (= fragment number). If
 `C(n,M) ≤ maxTestCount` (100 in GUI): enumerate `x in 0..2^n−1`, bitset LSB-first (`int_to_bitset`),
 keep popcount==M, map bit i → `fragIndices[i]`, return `(False, sorted(subs))`; else draw
@@ -587,17 +601,17 @@ idLine = easy16(idBin) split into 4-char groups joined by ' ' → "xxxx xxxx xxx
 data   = pub33[1:33] || chaincode32                          # 64 bytes
 lines  = [makeSixteenBytesEasy(data[i:i+16]) for i in 0,16,32,48]
 ```
-Printed by `DlgWODataPrintBackup` (`qtdialogs.py:11526-11716`): `Watch-Only Root ID:` + idLine,
+Printed by `DlgWODataPrintBackup` (`qtdialogs.py:11526-11715`): `Watch-Only Root ID:` + idLine,
 `Watch-Only Root:` + 4 lines; QR = `'\n'.join([idLine]+lines)`. No SecurePrint, no fragments.
 File `writePKCCFile` (`PyBtcWallet.py:1311-1329`), extension `.rootpubkey`, default name
-`armory_<wltIDB58>.rootpubkey` (`ArmoryQt.py:1735-1743`): `"1\n" + idLine + "\n" + 4×(line + "\n")`.
+`armory_<wltIDB58>.rootpubkey` (`ArmoryQt.py:1728-1743`): `"1\n" + idLine + "\n" + 4×(line + "\n")`.
 
 Restore `DlgRestoreWOData` (`qtdialogs.py:12605-12845`):
 1. File load: `read().splitlines()`; `int(lines[0]) != 1` → silently ignore; fill ID from line 2,
-   data from lines 3-6 (`12703-12719`).
+   data from lines 3-6 (`12699-12719`).
 2. ID: mask `'<AAAA\ AAAA\ AAAA\ AAAA\ AA!'`; `rawID = easyType16_to_binary(text without spaces)`;
    must be 9 bytes; `verifyChecksum(rawID[:7], rawID[7:9])` (fixes ≤1 byte; ''→error) (`12733-12748`).
-3. Data: 4 lines via `readSixteenEasyBytes` (`12768-12790`).
+3. Data: 4 lines via `readSixteenEasyBytes` (`12768-12793`).
 4. `sign = ((ver & 0x80) >> 7) + 2`; `pub65 = UncompressPoint(sign || L1 || L2)`;
    `chain = L3 || L4`; version bits `ver & 0x7f` read but ignored (`12795-12800`).
 5. `newWltID = base58(idBytes[1:7])` — taken **from the ID line, not recomputed from the key data**
@@ -619,8 +633,8 @@ Restore `DlgRestoreWOData` (`qtdialogs.py:12605-12845`):
 - **Full**: Bare + collect address/tx comments and copy them; also builds a recovered WO wallet for
   watch-only inputs (`1140`).
 - **Meta**: no recovery; returns dict `{shortLabel, longLabel, naddress, ncomments, 0..n-1:[rawData,
-  hashVal, dtype]}` (`563-565`, `676-678`, `718-722`). Used by `DlgReplaceWallet` "Merge" (`qtdialogs.py:13926-13935`).
-- **Check**: consistency check only; locked wallet without passphrase treated as watch-only (`509-528`);
+  hashVal, dtype]}` (`563-565`, `676-678`, `717-722`). Used by `DlgReplaceWallet` "Merge" (`qtdialogs.py:13926-13937`).
+- **Check**: consistency check only; locked wallet without passphrase treated as watch-only (`486-528`);
   never writes a recovered wallet (`1141` requires mode < Meta). Used at startup via
   `WalletConsistencyCheck` (`1666-1675`, returns `[code, strOutput]`) and by armoryd (`armoryd.py:3335`, `Mode=5`).
 UI: `DlgWltRecoverWallet` (`qtdialogs.py:13941-14200`) radio Stripped/Bare/Full(default)/Check; Full on a
@@ -637,7 +651,7 @@ loaded wallet → `FixWalletList` (moves files), otherwise `ParseWallet` (`FixWa
    addr-comment, tx-comment, deleted entry, else advance 1 byte recursively). Address entries
    (`dtype 0`) with `chainIndex > -2` go to `addrDict[chainIndex] = [addr, hashVal, seqNo, offset, raw]`;
    `chainIndex ≤ -2` → `importedDict`. Comments kept for Full/Meta/Check. OPEVAL/unknown → `misc`.
-4. Root checks: root pubkey derived from root privkey; chain index 0 derived from root (`694-711`).
+4. Root checks: root pubkey derived from root privkey; chain index 0 derived from root (`696-711`).
 5. Per chained address (`730-1030`): re-serialize vs raw (`byteError`); pubkey valid EC point
    (`invalidPubKey`) or missing (`missingPubKey`); chaincode equals index-0 chaincode
    (`chainCodeCorruption`); file order (`brokenSequence`, not counted in nErrors); index gaps
@@ -646,7 +660,7 @@ loaded wallet → `FixWalletList` (moves files), otherwise `ParseWallet` (`FixWa
    (`unmatchedPair`), recompute private key chain (from previous entry or root) — if the stored key
    differs, mark `isPrivForked`, store the bad entry as an import with `chainIndex = -3 - chainIndex`
    and continue with the valid key; `addrStr20 != hashVal` → `hashValMismatch`.
-6. Imported entries (`1032-1130`): byte errors, pub validity/missing, missing priv, encryption flag,
+6. Imported entries (`1033-1130`): byte errors, pub validity/missing, missing priv, encryption flag,
    pub/priv match, hashVal (only when `chainIndex == 2`, effectively never) → `importedErr`;
    `chainIndex < -2` → `negativeImports`.
 7. `nerrors = rawError+byteError+sequenceGaps+forkedPublicKeyChain+chainCodeCorruption+invalidPubKey
@@ -658,7 +672,7 @@ loaded wallet → `FixWalletList` (moves files), otherwise `ParseWallet` (`FixWa
    key). For negative imports, log a **privacy-preserving multiplier**:
    `regQ = HMAC256(rootPriv, "LogMult%d" % nonce)` with the first nonce making `BE(regQ) < n`;
    `privMult = badPriv * regQ^{-1} mod n` (hex appended to `privKeyMultipliers`, sanity-checked
-   `privMult * regQ == badPriv`) (`1185-1205`, `1649-1663`). Full: re-add comments.
+   `privMult * regQ == badPriv`) (`1172-1207`, `1649-1663`). Full: re-add comments.
 9. Return `BuildLogFile(0 if nerrors==0 else 1)`; Meta returns the dict.
 
 ### 6.3 Output log (`BuildLogFile` `103-341`, `FinalizeLog` `344-381`)
@@ -804,6 +818,7 @@ Lines 50-82:
          fragmentList = [value for value in combinationMap.itervalues()]
          reconSecret = ReconstructSecret(fragmentList, m, len(secret))
          self.assertEqual(reconSecret, secret)
+         
 
    def testFragmentedBackup(self):
 
