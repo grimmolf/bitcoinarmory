@@ -1,6 +1,7 @@
 //! `armory`: command-line interface (and, later, the TUI) for Armory wallets.
 
 mod app;
+mod cli_modern;
 mod context;
 
 use std::path::PathBuf;
@@ -34,21 +35,34 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create, inspect and manage wallets.
+    /// Create, restore, migrate and manage wallets (BIP39 / BIP84 / BIP86).
     #[command(subcommand)]
-    Wallet(WalletCmd),
-    /// Receive addresses, labels and keys.
+    Wallet(cli_modern::WalletCmd),
+    /// Receive addresses and labels.
     #[command(subcommand)]
-    Address(AddressCmd),
+    Address(cli_modern::AddressCmd),
+    /// Armory 0.93 (v1.35) `.wallet` files: inspect, keys, byte-compatible edits.
+    #[command(subcommand)]
+    Legacy(LegacyCmd),
 }
 
 #[derive(Subcommand)]
-enum WalletCmd {
+enum LegacyCmd {
+    /// Legacy wallet files.
+    #[command(subcommand)]
+    Wallet(LegacyWalletCmd),
+    /// Addresses of legacy wallet files.
+    #[command(subcommand)]
+    Address(LegacyAddressCmd),
+}
+
+#[derive(Subcommand)]
+enum LegacyWalletCmd {
     /// List wallets.
     List,
     /// Show wallet properties.
     Show { id: String },
-    /// Create a new wallet.
+    /// Create a new v1.35 wallet (legacy format; prefer `armory wallet create`).
     Create(CreateArgs),
     /// Import a .wallet file (it is copied, never moved).
     Import {
@@ -112,7 +126,7 @@ struct CreateArgs {
 }
 
 #[derive(Subcommand)]
-enum AddressCmd {
+enum LegacyAddressCmd {
     /// List the addresses of a wallet.
     List {
         id: String,
@@ -138,7 +152,7 @@ enum AddressCmd {
     RemoveImported { address: String },
 }
 
-fn print<T: Serialize>(json: bool, value: &T, text: impl FnOnce(&T) -> String) {
+pub(crate) fn print<T: Serialize>(json: bool, value: &T, text: impl FnOnce(&T) -> String) {
     if json {
         println!("{}", serde_json::to_string_pretty(value).expect("serializable"));
     } else {
@@ -150,14 +164,16 @@ fn run(cli: Cli) -> Result<()> {
     let ctx = Context::new(cli.network, cli.datadir, cli.passphrase_file)?;
     let json = cli.json;
     match cli.command {
-        Command::Wallet(cmd) => wallet(&ctx, json, cmd),
-        Command::Address(cmd) => address(&ctx, json, cmd),
+        Command::Wallet(cmd) => cli_modern::wallet(&ctx, json, cmd),
+        Command::Address(cmd) => cli_modern::address(&ctx, json, cmd),
+        Command::Legacy(LegacyCmd::Wallet(cmd)) => wallet(&ctx, json, cmd),
+        Command::Legacy(LegacyCmd::Address(cmd)) => address(&ctx, json, cmd),
     }
 }
 
-fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
+fn wallet(ctx: &Context, json: bool, cmd: LegacyWalletCmd) -> Result<()> {
     match cmd {
-        WalletCmd::List => {
+        LegacyWalletCmd::List => {
             let list: Vec<_> = app::list_wallets(ctx)?.iter().map(app::summary).collect();
             print(json, &list, |l| {
                 if l.is_empty() {
@@ -177,7 +193,7 @@ fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
                     .join("\n")
             });
         }
-        WalletCmd::Show { id } => {
+        LegacyWalletCmd::Show { id } => {
             let f = app::open_wallet(ctx, &id)?;
             print(json, &app::summary(&f), |s| {
                 format!(
@@ -195,7 +211,7 @@ fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
                 )
             });
         }
-        WalletCmd::Create(a) => {
+        LegacyWalletCmd::Create(a) => {
             let f = app::create_wallet(
                 ctx,
                 &app::CreateOptions {
@@ -209,26 +225,20 @@ fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
             )?;
             let s = app::summary(&f);
             print(json, &s, |s| {
-                format!(
-                    "Created wallet {} ({}).\nBack it up now: `armory backup paper {}` (not yet available in this build; keep a copy of {}).",
-                    s.id,
-                    s.label,
-                    s.id,
-                    s.path.display()
-                )
+                format!("Created legacy wallet {} ({}). Keep a copy of {}.", s.id, s.label, s.path.display())
             });
         }
-        WalletCmd::Import { file, replace } => {
+        LegacyWalletCmd::Import { file, replace } => {
             let f = app::import_wallet(ctx, &file, replace)?;
             print(json, &app::summary(&f), |s| format!("Imported wallet {} ({}).", s.id, s.label));
         }
-        WalletCmd::Rename { id, label, description } => {
+        LegacyWalletCmd::Rename { id, label, description } => {
             let mut f = app::open_wallet(ctx, &id)?;
             f.wallet.set_labels(&label, &description)?;
             f.save()?;
             print(json, &app::summary(&f), |s| format!("Wallet {} renamed to {}.", s.id, s.label));
         }
-        WalletCmd::Passphrase { id, action, kdf_target_ms } => {
+        LegacyWalletCmd::Passphrase { id, action, kdf_target_ms } => {
             let mut f = app::open_wallet(ctx, &id)?;
             let what = match action {
                 PassAction::Set => app::PassphraseChange::Set,
@@ -240,7 +250,7 @@ fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
                 format!("Wallet {} is now {}.", s.id, if s.encrypted { "encrypted" } else { "unencrypted" })
             });
         }
-        WalletCmd::Check { id, keys } => {
+        LegacyWalletCmd::Check { id, keys } => {
             let mut f = app::open_wallet(ctx, &id)?;
             let r = app::check_wallet(ctx, &mut f, keys)?;
             print(json, &r, |r| {
@@ -252,7 +262,7 @@ fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
                 )
             });
         }
-        WalletCmd::ExportWatchonly { id, dest } => {
+        LegacyWalletCmd::ExportWatchonly { id, dest } => {
             let f = app::open_wallet(ctx, &id)?;
             let p = app::export_watching_only(&f, &dest)?;
             print(json, &p, |p| format!("Watching-only copy written to {}.", p.display()));
@@ -261,9 +271,9 @@ fn wallet(ctx: &Context, json: bool, cmd: WalletCmd) -> Result<()> {
     Ok(())
 }
 
-fn address(ctx: &Context, json: bool, cmd: AddressCmd) -> Result<()> {
+fn address(ctx: &Context, json: bool, cmd: LegacyAddressCmd) -> Result<()> {
     match cmd {
-        AddressCmd::List { id, all } => {
+        LegacyAddressCmd::List { id, all } => {
             let f = app::open_wallet(ctx, &id)?;
             let list: Vec<_> =
                 app::addresses(&f).into_iter().filter(|a| all || a.used || a.chain_index < 0).collect();
@@ -278,12 +288,12 @@ fn address(ctx: &Context, json: bool, cmd: AddressCmd) -> Result<()> {
                     .join("\n")
             });
         }
-        AddressCmd::New { id, pool } => {
+        LegacyAddressCmd::New { id, pool } => {
             let mut f = app::open_wallet(ctx, &id)?;
             let a = app::new_address(&mut f, pool)?;
             print(json, &a, |a| a.address.clone());
         }
-        AddressCmd::Show { address } => {
+        LegacyAddressCmd::Show { address } => {
             let (f, h) = app::find_address(ctx, &address)?;
             let r = f.wallet.record_by_hash160(&h).expect("found");
             let info = serde_json::json!({
@@ -303,12 +313,12 @@ fn address(ctx: &Context, json: bool, cmd: AddressCmd) -> Result<()> {
                 )
             });
         }
-        AddressCmd::Label { address, label } => {
+        LegacyAddressCmd::Label { address, label } => {
             let (mut f, h) = app::find_address(ctx, &address)?;
             app::set_label(&mut f, h, &label)?;
             print(json, &label, |_| format!("Label set for {address}."));
         }
-        AddressCmd::Keys { address } => {
+        LegacyAddressCmd::Keys { address } => {
             let (mut f, h) = app::find_address(ctx, &address)?;
             let k = app::export_key(ctx, &mut f, h)?;
             eprintln!("WARNING: anyone who sees this private key can spend the funds of this address.");
@@ -319,13 +329,13 @@ fn address(ctx: &Context, json: bool, cmd: AddressCmd) -> Result<()> {
                 )
             });
         }
-        AddressCmd::ImportKey { id } => {
+        LegacyAddressCmd::ImportKey { id } => {
             let mut f = app::open_wallet(ctx, &id)?;
             let text = context::read_secret("Private key: ")?;
             let a = app::import_key(ctx, &mut f, &text)?;
             print(json, &a, |a| format!("Imported {a}."));
         }
-        AddressCmd::RemoveImported { address } => {
+        LegacyAddressCmd::RemoveImported { address } => {
             let (mut f, h) = app::find_address(ctx, &address)?;
             app::remove_imported(&mut f, h)?;
             print(json, &address, |a| format!("Removed {a}."));
@@ -341,10 +351,14 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
-            match e.downcast_ref::<armory_wallet::Error>() {
-                Some(armory_wallet::Error::WrongPassphrase) => ExitCode::from(3),
-                _ => ExitCode::FAILURE,
-            }
+            let wrong_pass = matches!(
+                e.downcast_ref::<armory_wallet::Error>(),
+                Some(armory_wallet::Error::WrongPassphrase)
+            ) || matches!(
+                e.downcast_ref::<armory_wallet::modern::ModernError>(),
+                Some(armory_wallet::modern::ModernError::WrongPassphrase)
+            );
+            if wrong_pass { ExitCode::from(3) } else { ExitCode::FAILURE }
         }
     }
 }

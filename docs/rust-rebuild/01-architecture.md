@@ -1,6 +1,6 @@
 # ADR-001: Architecture of the Rust rebuild
 
-Status: proposed · Date: 2026-10-01 · Depends on: [00-feature-evaluation](00-feature-evaluation.md)
+Status: accepted (amended by ADR-002) · Date: 2026-10-01 · Depends on: [00-feature-evaluation](00-feature-evaluation.md)
 
 ## Context
 
@@ -132,13 +132,14 @@ files 0600; the program refuses to modify a wallet file that other users can rea
 | # | Milestone | Exit criterion |
 |---|---|---|
 | M0 | Workspace and primitives | KDF/AES/chain match the oracle; Easy16, checksum and Shamir vectors pass |
-| M1 | Legacy wallets | All fixture wallets parse, re-derive and re-serialize byte-identically; `armory wallet list/show/import`, `address list/new` offline |
-| M2 | Backups | Paper/SecurePrint/fragments create and restore; `backup test`; legacy deterministic fragments restore |
+| M1 | Legacy wallets | All fixture wallets parse, re-derive and re-serialize byte-identically; `armory legacy wallet …` / `legacy address …` |
+| M1b | Modern wallets (D-1/D-2, [ADR-002](02-modern-wallet-format.md)) | BIP39/BIP84/BIP86 vectors; v2 file with Argon2id + XChaCha20-Poly1305; migration of v1.35 wallets; descriptors |
+| M2 | Backups | Paper/SecurePrint/fragments of the BIP39 entropy and of legacy roots, create and restore; `backup test`; legacy deterministic fragments restore |
 | M3 | Core backend | Regtest: sync, balance, history, UTXOs for legacy wallets via descriptor watch-only wallets |
 | M4 | Spending | Send (P2PKH legacy inputs → any output type), PSBT and USTX offline round-trip, broadcast with reject reasons, RBF |
 | M5 | Lockboxes and messages | Lockbox create/import/fund/spend/merge, promissory notes, message sign/verify |
 | M6 | TUI | All screens from evaluation §5 |
-| M7 | New wallet type (D-1/D-2) | BIP32/BIP84 wallets with Armory paper and fragment backups |
+| M7 | goatpig `.lmdb` import | Spec and import of 0.96/0.97 wallets (#355/#356) |
 | M8 | Daemon and packaging | `armory daemon`; RPM/COPR and Homebrew |
 
 ## Consequences

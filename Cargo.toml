@@ -13,7 +13,7 @@ authors = ["Armory contributors"]
 [workspace.dependencies]
 armory-crypto = { path = "crates/armory-crypto" }
 armory-wallet = { path = "crates/armory-wallet" }
-bitcoin = { version = "0.32", default-features = false, features = ["std", "rand-std"] }
+bitcoin = { version = "0.32", default-features = false, features = ["std", "rand-std", "serde"] }
 aes = "0.8"
 num-bigint = "0.4"
 num-traits = "0.2"
@@ -24,6 +24,11 @@ hex = "0.4"
 rand = "0.8"
 proptest = "1"
 tempfile = "3"
+bip39 = { version = "2", features = ["zeroize"] }
+argon2 = { version = "0.5", features = ["zeroize"] }
+chacha20poly1305 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

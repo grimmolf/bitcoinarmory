@@ -38,15 +38,15 @@ that compiles Armory's original C++ crypto (`tools/legacy-oracle/`).
 | **C. Drop** | Depends on dead infrastructure or obsolete design | ATI announcements/version check/secure downloader/`versions.txt`, torrent bootstrap, bitcoind auto-download, bug-report upload, SMTP email from armoryd, ATI-signed plugin zips, donation nags, Windows packaging, Bitcoin alert system, `TxDP` format (already unparseable in 0.93) |
 | **D. New (forced by the contract)** | Not in Armory, but required to be usable today | Pay to bech32/bech32m (P2WPKH, P2WSH, P2TR) addresses, BIP144 tx parsing, vbyte fee maths, RBF awareness, PSBT (BIP174), descriptor export, testnet4/signet, Core ≥ 29 cookie-auth, segwit receive addresses for **new** wallets (see decision D-1) |
 
-## 2. Decisions that need the owner's call
+## 2. Decisions (D-1 and D-2 decided; the rest proceed on their recommended defaults)
 
 These are deliberately **not** decided silently. Each has a recommended default which the architecture plan
 (`01-architecture.md`) assumes until told otherwise.
 
 | ID | Question | Options | Recommendation |
 |---|---|---|---|
-| **D-1** | What key scheme do *new* wallets use? | (a) Legacy Armory 1.35 chain only (P2PKH, uncompressed keys, no segwit) · (b) BIP32 descriptor wallets (BIP84 P2WPKH + BIP86 P2TR) with Armory's backup UX on top · (c) both | **(c)**: create BIP32/BIP84 by default; still create, restore and spend v1.35 wallets. Legacy-only means every new wallet pays legacy P2PKH fees forever and cannot receive to segwit. |
-| **D-2** | How do new BIP32 wallets get backed up? | (a) BIP39 mnemonic · (b) Armory Easy16 paper of the 32-byte seed (+ SecurePrint) · (c) Armory Shamir fragments of the seed · (d) SLIP-39 | **(b) + (c)** using the *exact* Armory encodings applied to a 16/32-byte seed, plus optional BIP39 export for interoperability. Keeps Armory's distinctive feature. |
+| **D-1** | What key scheme do *new* wallets use? | (a) Legacy 1.35 only · (b) BIP32 (BIP84 + BIP86) · (c) both | **Decided (owner, 2026-10-01): modern.** New wallets are BIP39/BIP32 with a BIP84 account (BIP86 optional) in the v2 format ([ADR-002](02-modern-wallet-format.md)). v1.35 wallets are migrated into a `legacy-1.35` account; `armory legacy …` keeps byte-compatible access. |
+| **D-2** | How do new BIP32 wallets get backed up? | (a) BIP39 · (b) Easy16 paper of the seed (+ SecurePrint) · (c) Shamir fragments of the seed · (d) SLIP-39 | **Decided with D-1:** 24 BIP39 words, plus Armory paper/SecurePrint/fragment formats applied to the BIP39 entropy (fragments with random coefficients). |
 | **D-3** | Offline-signing interchange | (a) Legacy USTX only · (b) PSBT only · (c) PSBT primary, USTX import/export for legacy offline signers | **(c)**. USTX cannot carry segwit inputs; PSBT is what every other signer speaks. |
 | **D-4** | Backend scope for v1 | (a) Bitcoin Core RPC only · (b) Core + Electrum server | **(a)** for v1 behind a `ChainBackend` trait; Electrum in v2 (it helps pruned-node users restore old backups). |
 | **D-5** | Keep an `armoryd`-compatible JSON-RPC daemon? | (a) Yes, method-compatible · (b) New JSON-RPC API mirroring the CLI · (c) No daemon | **(b)** in a later phase, with a shim that keeps the method names that still make sense (§4.12). The CLI ships first. |

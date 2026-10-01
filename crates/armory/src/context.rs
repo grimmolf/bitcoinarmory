@@ -26,6 +26,16 @@ impl Network {
         }
     }
 
+    pub fn bitcoin(self) -> bitcoin::Network {
+        match self {
+            Network::Mainnet => bitcoin::Network::Bitcoin,
+            Network::Testnet3 => bitcoin::Network::Testnet,
+            Network::Testnet4 => bitcoin::Network::Testnet4,
+            Network::Signet => bitcoin::Network::Signet,
+            Network::Regtest => bitcoin::Network::Regtest,
+        }
+    }
+
     pub fn dir_name(self) -> &'static str {
         match self {
             Network::Mainnet => "mainnet",
