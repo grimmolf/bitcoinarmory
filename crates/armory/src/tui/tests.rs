@@ -329,7 +329,7 @@ fn regtest_send_through_the_dialogs() {
         submit(&mut app);
         wait(&mut app);
         assert!(
-            top_view(&app).starts_with("confirm:") && top_view(&app).contains("0.30000000"),
+            top_view(&app).starts_with("confirm:") && top_view(&app).contains(" 0.3 BTC"),
             "{}",
             top_view(&app)
         );
