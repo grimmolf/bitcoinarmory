@@ -94,7 +94,7 @@ files 0600; the program refuses to load a world-readable wallet unless `--allow-
 
 | Artifact | Read | Write |
 |---|---|---|
-| `.wallet` v1.35 (encrypted/unencrypted/watching-only) | yes | yes (byte-compatible with Armory 0.93) |
+| `.wallet` v1.35 (encrypted/unencrypted/watching-only) | yes: unencrypted and encrypted (incl. pending records) verified on real Armory files; watching-only/imported/deleted records verified by code reading only | yes (byte-compatible with Armory 0.93) |
 | Paper backup 1.35a/1.35c, SecurePrint | yes | yes |
 | Fragmented backup (legacy deterministic) | yes | no (new sets are randomized; documented break) |
 | USTX (all 3 layouts), lockbox (v0/v1), public-key block, promissory note, signed-message blocks | yes | newest layout, 80-column armour |

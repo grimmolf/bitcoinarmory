@@ -10,3 +10,15 @@ These are **testnet** files with unencrypted test keys; never use them with real
 | `Simulfund_fmuHCs5G.sigcollect.tx` | multi-party simulfunding USTX | `specs/04-lockboxes-multisig.md` |
 | `Contrib_*_1BTC.promnote` | promissory notes (version 0 in v1 layout) | `specs/04-lockboxes-multisig.md` |
 | `multisigs.txt` | 4 lockboxes (2-of-3, 1-of-2, 2-of-2, 4-of-7), version 0 | `specs/04-lockboxes-multisig.md` |
+
+## Encrypted fixtures (`encrypted/`)
+
+Real encrypted v1.35 wallets written by Armory, taken from the successor project
+[goatpig/BitcoinArmory](https://github.com/goatpig/BitcoinArmory) at commit `d0294d59` (licensed there under
+the ATI AGPL / goatpig MIT terms in that repository's `LICENSE`). Verified in
+`docs/rust-rebuild/specs/01a-encrypted-wallet-verification.md`.
+
+| File | Source path | Passphrase | Notes |
+|---|---|---|---|
+| `FakeWallet123.wallet` | `extras/test/FakeWallet123.wallet` | `FakeWallet123` | random (pre-1.35a) chain code |
+| `goatpig-legacy-testnet.wallet` | `cppForSwig/gtest/input_files/legacy.wallet` | `testnet` (`BridgeTests.cpp:3499`) | contains pending records (idx 100-102, created while locked) |
