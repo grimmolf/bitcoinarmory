@@ -1,6 +1,6 @@
 # Armory → Rust: feature evaluation against the current contract
 
-Status: draft for review · Date: 2026-10-01 · Branch: `rust-rebuild`
+Status: v0.1 delivered (see §7 for what shipped and what is deferred) · Date: 2026-10-01 · Branch: `rust-rebuild`
 
 ## 0. Scope and interpretation
 
@@ -323,6 +323,10 @@ integration test for its CLI command.
 
 One binary, `armory`; `armory tui` (or `armory` with no arguments in a terminal) starts the TUI. Screens:
 
+As built (v0.1): Overview, Wallets, Receive, Send, History (transactions and coins), Offline, Lockboxes,
+Backup, Tools, Settings, plus a command palette (`:`) that runs any `armory` command. The full command → key map is
+in [`crates/README.md`](../../crates/README.md#terminal-interface). The original plan:
+
 1. **Dashboard**: node status, sync progress, balances, recent activity, alerts.
 2. **Wallets**: list → wallet detail (addresses, history, properties) → actions (receive, send, backup, passphrase).
 3. **Send**: recipients, fee, coin control, change; review; sign / save unsigned.
@@ -334,7 +338,9 @@ One binary, `armory`; `armory tui` (or `armory` with no arguments in a terminal)
 9. **Tools**: message sign/verify, EC calculator, raw broadcast, address book.
 10. **Settings**.
 
-Every TUI action calls the same library function as its CLI command; the TUI adds no logic of its own.
+Every TUI action calls the same library function as its CLI command; the TUI adds no logic of its own. As built,
+transactions go through shared prepare/execute operations and every other action runs the CLI command itself
+in-process (output captured, prompts answered from TUI dialogs).
 
 ## 6. Upstream open issues
 
@@ -361,3 +367,25 @@ SegWit, bech32, RBF/CPFP, `estimatesmartfee`, cookie auth and, in 0.97, an `.lmd
 features confirm the bucket-D list above. Importing goatpig-era `.lmdb` wallets (#355, #356) is a **roadmap item,
 not v1**: the format encrypts public data too and needs its own spec. The successor relicensed to MIT from 0.94. This
 tree is AGPL-3.0 (ATI, 2011–2015), so the Rust rebuild, as a derivative work, stays AGPL-3.0.
+
+## 7. Delivery status (v0.1)
+
+Delivered rows are covered by CLI integration tests (`crates/armory/tests/cli.rs`), the end-to-end test against
+`bitcoind -regtest` 29.1 (`tests/regtest.rs`, run in CI) and the TUI tests (every screen rendered, every advertised
+key exercised, a payment through the dialogs against regtest Core). Every delivered command is reachable from the TUI.
+
+| Area | Delivered | Deferred (reason) |
+|---|---|---|
+| Wallets | WM-01, 03, 04, 05, 06, 07, 08 (per-action passphrase), 09 (the TUI never keeps keys unlocked, so there is nothing to time out), 10 (`wallet remove`, renames), 14/15 (`legacy wallet import`, `wallet import`), 16 (`--replace`), 18 (`wallet check`), 21 (`wallet sync`), 22, 24, 25, 26/27, 28; KDF cost in `wallet show` (13) | WM-02 ledger visibility and WM-23 ledger filter (one wallet per screen in the TUI makes them moot for now); WM-11 owner field (no consumer yet); WM-12 is `wallet sync --gap`; WM-13 benchmark; WM-17 damaged-wallet recovery modes (needs corrupted-file fixtures first) |
+| Receiving | AR-01, 03, 04 (terminal QR), 05 (`legacy address show`; modern `address list`), 06 (`wallet export-keys`, `legacy address keys`), 07 (legacy wallets; modern wallets sweep instead), 08, 09, 10, 11, 14 | AR-02 no-backup warning; AR-04 `--png` |
+| Sending | SD-01/02, 03, 04 (`--from-utxo`, TUI coin marking), 06, 07, 08, 09, 12 (`lockbox:ID`), 13, RBF bump, abandon | SD-05 change options (a new change address every time is the modern default) |
+| Offline | OS-01, 03, 04, 05 (files), 06 (everything but sync/broadcast works without a node) | — |
+| Backups | BK-01/02 (TUI Backup screen), 03 (text), 04, 05 (`backup file`), 06, 07, 08, 09, 11 (`restore … --test`) | BK-03 PDF/HTML layouts; BK-10 watch-only from root data (import the watching-only file instead) |
+| Lockboxes | MS-01..11, 15, 16; SegWit `wsh(sortedmulti)` lockboxes | MS-12..14 simulfunding / promissory notes (rarely used; the fixtures stay for a later port); MS-17 per-lockbox ledger (balance and coins are shown) |
+| Messages | SG-01..05, BIP322 | — |
+| Tools | TL-01, 04 (`tx broadcast --raw`), 10 (OSC 52 copy in the TUI) | TL-02 log export and MI-16 logging (no log yet); TL-03 EC calculator; TL-11 explorer links |
+| Node | ND-03/04/05, 06, 09 (verification progress), 10 (30 s polling), 11, 12 (`--rescan-from`), 14 (`config unset`), 18/19, 21 (status-line notice), 22 (warns below 29), 24, 25 | ND-01 service templates |
+| Settings | `config list/set/unset/path`; TUI Settings (network, node connection, save as defaults) | `config get/reset`, `import-legacy`, per-wallet keys |
+| Shell | HU-01, 03/04/13 (man page, docs), 09 (licence in `about`), 10 (empty-state guidance), MI-01..07, 13–15, 20/21, 22, 24/25; Fedora RPM, Homebrew formula, portable archive | MI-08 URI handler, MI-09 single-instance lock, MI-17 i18n, MI-18 `NO_COLOR` |
+| Later phases | — | Daemon (§4.12, D-5), plugins PL-03/04, goatpig 0.97 `.lmdb` import, Electrum backend |
+
